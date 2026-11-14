@@ -1,0 +1,34 @@
+---
+name: mcp-setup
+description: 사내 MCP 개발 환경 구성 — 지금 워크스페이스에 goose 시험 환경(goose·srt 샌드박스·mcp-test)을 받고 사내 Git 저장소(CI 워크플로 포함)를 연결한다. "환경 구성해줘", "MCP 개발 준비", "goose 설치" 일 때.
+---
+
+# 사내 MCP 개발 환경 구성
+
+스크립트: `node "${CLAUDE_PLUGIN_ROOT}/scripts/kitdev.mjs"`
+(`${CLAUDE_PLUGIN_ROOT}` 가 치환되지 않았으면, 이 스킬의 Base directory 기준 `../../scripts/kitdev.mjs`)
+
+## 순서
+1. 사내 MCP 키트 주소를 확인한다.
+   - 사내 마켓플레이스에서 받은 플러그인이면 주소가 이미 들어 있다(플러그인 폴더 `kit.json`). 이때는 `--kit` 없이 실행한다.
+   - 그것도 없고 사용자가 주지 않았으며 `.kit/workspace.json` 도 없으면 한 번만 묻는다. 예: `https://mcp.사내도메인`
+2. 이 폴더가 사내 Git 저장소가 아니면 새 MCP 이름을 정한다.
+   - 이름은 영문 소문자로 시작하고 소문자·숫자·`-` 만 쓴다(2~39자).
+   - 사용자가 말한 MCP 용도에서 짓고, 정한 이름을 알려 준다.
+3. 실행한다(워크스페이스 폴더에서).
+   ```
+   node "<스크립트>" setup [--kit <주소>] --name <이름> --desc "<한 줄 설명>"
+   ```
+   - 처음이면 사내 Git 로그인 창(Git Credential Manager — 브라우저 또는 계정·비밀번호 창)이 뜬다. 사용자에게 사내 Git 계정으로 로그인하라고 알린다. 한 번 로그인하면 그 뒤 setup·ci·test·deploy 는 다시 묻지 않는다(저장된 것이 거절되면 스크립트가 지우고 한 번 다시 묻는다 — 손으로 git credential reject 하라고 하지 않는다).
+   - goose·srt·mcp-test 가 워크스페이스 `.kit/` 에 설치된다.
+   - 저장소에는 시작 코드와 `.gitea/workflows/kit-ci.yml` 이 들어간다.
+4. 출력 마지막의 "처음 한 번만" 줄(윈도우 샌드박스 준비)이 있으면 사용자에게 그대로 전한다.
+   - 관리자 PowerShell 에서 실행해야 하는 명령이다. 내가 대신 실행하지 않는다.
+
+## 실패하면
+- `KITDEV-FAIL:` 뒤의 까닭을 읽고 그대로 고칠 수 있으면 고친 뒤 다시 실행한다. 예: 이름 형식, 다른 저장소에 연결된 폴더.
+- 네트워크·로그인·권한 문제는 그 줄을 사용자에게 보여 주고 무엇을 해야 하는지 한 문장으로 말한다.
+
+## 지켜야 할 것
+- `.kit/` 는 커밋하지 않는다(.gitignore 에 들어간다).
+- 키·토큰을 파일이나 명령줄에 적지 않는다. 로그인은 Git Credential Manager 가 한다.
