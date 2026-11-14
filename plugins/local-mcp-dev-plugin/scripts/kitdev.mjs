@@ -243,9 +243,14 @@ async function setup(a) {
     repo = p.data?.repo || `${kit.cred.user}/${a.name}`;
     if (!existsSync(join(WS, ".git"))) mustGit("init", "-q", "-b", "main");
     mustGit("remote", "add", "origin", `${pub}/git/${repo}.git`);
+  }
+  // 시작 코드 받기 — 처음이든, 지난번에 받다 멈춘 폴더(원격만 연결되고 로컬 커밋이 없음)든
+  if (!git("rev-parse", "--verify", "-q", "HEAD").ok) {
     mustGit("fetch", "-q", "origin");
-    if (git("rev-parse", "--verify", "-q", "origin/main").ok) mustGit("checkout", "-q", "-f", "-B", "main", "origin/main");
-    mustGit("branch", "-q", "--set-upstream-to=origin/main", "main");
+    if (git("rev-parse", "--verify", "-q", "origin/main").ok) {
+      mustGit("checkout", "-q", "-f", "-B", "main", "origin/main");
+      mustGit("branch", "-q", "--set-upstream-to=origin/main", "main");
+    }
   }
   // 3) CI 워크플로(사내 기본값) — 없으면 넣는다
   const wf = join(WS, ".gitea", "workflows", "kit-ci.yml");
