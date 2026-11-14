@@ -4,9 +4,8 @@
 //   login  [--check 1 | --signup 1] [--kit <주소>]          사내 Git 로그인 — check: 저장된 로그인 있나(창 없이) · signup: 가입 페이지를 브라우저로
 //   setup  --kit <주소> [--name <MCP 이름>] [--desc <설명>]   워크스페이스에 goose·샌드박스·mcp-test 설치 + 사내 Git 저장소 연결
 //   ci     [-m <커밋 메시지>]                                  commit·push → 사내 CI 결과를 기다려 통과/실패(실패 줄만) 보고
-//   test   -t <질문> [--with-extension <명령>]                 CI 를 통과한 지금 코드만 goose(샌드박스 — 윈도우 MXC · 맥·리눅스 srt)에서 시험
-//   approve <번호> [--deny 1]                                시험 중 툴 호출 승인 요청에 답하고 이어서 결과를 기다림
-//   wait                                                     뒤에서 도는 시험의 다음 승인 요청·끝을 기다림
+//   test   -t <질문> [--with-extension <명령>]                 CI 를 통과한 지금 코드만 goose(MXC 샌드박스)에서 시험
+//   wait                                                     뒤에서 도는 시험의 남은 출력·끝을 기다림
 //   deploy                                                   CI 를 통과한 커밋으로 배포 요청
 //   mode   [on|off]                                          실행 모드 보기·바꾸기 — on: CI 켬(통과 커밋만 · 바깥 네트워크 열림)
 //                                                            off: CI 끔(검사 없이 바로 · 관리자 화이트리스트 네트워크만)
@@ -16,7 +15,7 @@
 // 키를 PC 에 새로 저장하지 않는다 — 사내 Git 자격 증명(Git Credential Manager 가 OS 저장소에 둔 것)을 그때그때 꺼내 쓴다.
 import { spawnSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, readdirSync, rmSync, openSync, closeSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, rmSync, openSync, closeSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir, homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -154,21 +153,15 @@ function writeBom(file, text) { writeFileSync(file, "﻿" + text, "utf8"); }
 
 // 설치 스크립트에는 클라이언트·샌드박스 파일 해시가 들어 있다 — 지난번에 받은 것과 다르면 키트가 바뀐 것이니 다시 설치(setup·test 공용)
 async function ensureKit(kit, force) {
-  const script = join(KIT, WIN ? "install.ps1" : "install.sh");
-  const body = await kit.must("GET", WIN ? "/download/install.ps1" : "/download/install.sh", null, {raw: true});
+  const script = join(KIT, "install.ps1");
+  const body = await kit.must("GET", "/download/install.ps1", null, {raw: true});
   const prev = existsSync(script) ? readFileSync(script, "utf8").replace(/^\uFEFF/, "") : null;
   if (!existsSync(join(KIT, "kit.json")) || force || prev !== body) {
     if (prev !== null && prev !== body) say("사내 키트가 바뀌어 goose 시험 환경을 새로 받습니다");
     const code = (await kit.must("POST", "/api/dlcode")).code;
     const env = {...process.env, KIT_TOKEN: code, KIT_DIR: KIT};
-    let r;
-    if (WIN) {
-      writeBom(script, body);
-      r = spawnSync("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script], {cwd: WS, env, stdio: "inherit"});
-    } else {
-      writeFileSync(script, body);
-      r = spawnSync("sh", [script], {cwd: WS, env, stdio: "inherit"});
-    }
+    writeBom(script, body);
+    const r = spawnSync("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script], {cwd: WS, env, stdio: "inherit"});
     if (r.status !== 0) die("goose 시험 환경 설치가 실패했습니다(위 출력 참고)");
   } else say(`goose 시험 환경은 최신입니다 (${KIT})`);
 }
@@ -218,6 +211,7 @@ async function login(a) {
 }
 
 async function setup(a) {
+  if (!WIN) die("사내 MCP 개발 키트는 윈도우 11 개발자 PC 만 지원합니다(MXC 샌드박스)");
   const pub = kitAddr(a);
   if (run("git", ["--version"]).status !== 0) die("git 이 없습니다 — Git for Windows 를 설치하세요");
   mkdirSync(KIT, {recursive: true});
@@ -373,8 +367,10 @@ async function budgetLine(kit) {
   const r = await kit.call("GET", "/api/devkit/budget");
   if (!r.data) return;
   const b = r.data;
-  const lim = b.limit_usd ? `$${b.limit_usd.toFixed(2)}` : "무제한";
-  say(`이번 주 LLM 사용 $${b.spent_usd.toFixed(2)} / 한도 ${lim}${b.left_usd != null ? ` (남은 $${b.left_usd.toFixed(2)})` : ""} — 월요일 0시에 다시 시작`);
+  // 1센트 아래도 0 으로 보이지 않게(시험 한 번은 보통 $0.00x)
+  const usd = v => `$${v > 0 && v < 0.01 ? v.toFixed(4) : v.toFixed(2)}`;
+  const lim = b.limit_usd ? usd(b.limit_usd) : "무제한";
+  say(`이번 주 LLM 사용 ${usd(b.spent_usd)} / 한도 ${lim}${b.left_usd != null ? ` (남은 ${usd(b.left_usd)})` : ""} — 월요일 0시에 다시 시작`);
   if (b.over) say("  한도를 다 써서 goose 시험의 LLM 호출과 배포 요청이 막힙니다 — 관리자에게 한도를 늘려 달라고 하세요");
 }
 
@@ -400,12 +396,11 @@ async function test(a) {
     child.on("exit", code => process.exit(code ?? 1));
     return;
   }
-  // Claude 가 부른 시험 — 사람이 답할 입력 창이 없다. 시험은 뒤에서 돌리고, 툴 호출 승인 요청이 오면 멈춰 Claude 에 돌려준다.
-  // Claude 가 `approve <번호>` 를 실행하려 할 때 Claude Code 의 실행 허용 창이 사람의 승인이 된다(Claude 에 아무것도 등록하지 않음)
+  // Claude 가 부른 시험 — 뒤에서 돌리고 출력을 이어서 보여 준다(Claude 의 명령 시간 제한에 걸리지 않게)
   rmSync(RUN, {recursive: true, force: true});
   mkdirSync(RUN, {recursive: true});
   writeFileSync(join(RUN, "run.json"), JSON.stringify({argv}));
-  spawn(process.execPath, [SELF, "_bg"], {cwd: WS, detached: true, stdio: "ignore", windowsHide: true, env: {...process.env, KIT_DIR: KIT, KIT_APPROVE_DIR: RUN}}).unref();
+  spawn(process.execPath, [SELF, "_bg"], {cwd: WS, detached: true, stdio: "ignore", windowsHide: true, env: {...process.env, KIT_DIR: KIT}}).unref();
   await follow();
 }
 
@@ -420,7 +415,7 @@ function bg() {
   child.on("exit", code => { closeSync(fd); writeFileSync(join(RUN, "exit.json"), JSON.stringify({code: code ?? 1})); process.exit(0); });
 }
 
-// 새 출력을 보이고, 답 없는 승인 요청이나 끝을 만나면 멈춘다
+// 새 출력을 보이고, 끝나면 멈춘다
 async function follow() {
   if (!existsSync(join(RUN, "run.json"))) die("뒤에서 도는 시험이 없습니다 — 먼저 test");
   const st = readJson(join(RUN, "state.json"), {off: 0});
@@ -435,29 +430,9 @@ async function follow() {
     }
     const done = readJson(join(RUN, "exit.json"));
     if (done) { const c = readJson(CONF); if (c) await budgetLine(new Kit(c.public)); process.exit(done.code); }
-    const req = readdirSync(RUN).filter(f => /^req-\d+\.json$/.test(f)).map(f => f.slice(4, -5))
-      .find(n => !existsSync(join(RUN, `ans-${n}.json`)));
-    if (req) {
-      const r = readJson(join(RUN, `req-${req}.json`));
-      // 승인은 사람이 프롬프트에서 `! node .kit/approve.mjs <번호>` 로 한다(Claude 가 대신 실행하지 않는다)
-      // Claude Code 의 `!` 는 PC 에 따라 bash·PowerShell 로 돈다 — 백슬래시·.cmd 없이 node + 슬래시 경로면 어느 셸이든 같다
-      writeFileSync(join(KIT, "approve.mjs"), `import { spawnSync } from "node:child_process";\nprocess.exit(spawnSync(process.execPath, [${JSON.stringify(SELF)}, "approve", ...process.argv.slice(2)], {stdio: "inherit"}).status ?? 1);\n`);
-      const cmd = "node .kit/approve.mjs";
-      say(`KITDEV-APPROVE ${req}: goose 가 툴 ${r.tool} 를 부르려 합니다 — 인자 ${JSON.stringify(r.args).slice(0, 300)}`);
-      say(`  사람이 프롬프트에 입력 — 허용: ! ${cmd} ${req}    거부: ! ${cmd} ${req} --deny 1`);
-      process.exit(0);
-    }
     if (Date.now() - t0 > 20 * 60e3) { say("시험이 아직 진행 중입니다 — 이어서 보려면 wait"); process.exit(0); }
     await sleep(500);
   }
-}
-
-async function approve(a) {
-  const n = a._[1];
-  if (!/^\d+$/.test(n || "") || !existsSync(join(RUN, `req-${n}.json`))) die(`승인 요청 ${n} 이 없습니다`);
-  writeFileSync(join(RUN, `ans-${n}.json`), JSON.stringify({allow: !a.deny}));
-  say(`승인 요청 ${n}: ${a.deny ? "거부" : "허용"} — 이어서 시험 결과를 기다립니다`);
-  await follow();
 }
 
 async function deploy() {
@@ -518,6 +493,8 @@ function deployGuide(r) {
     return;
   }
   say(`  ✓ 배포 완료 — Claude 를 다시 켜면(/exit 뒤 claude) MCP ${r.name} 를 쓸 수 있습니다`);
+  // 사내 마켓플레이스 자동 갱신은 Claude 가 첫 메시지를 받은 뒤 최대 10분 안에 돌고 다음 실행부터 적용된다(Claude Code 문서 · 2026-11-15 Azure 확인)
+  say(`  · 고친 판이 회사 Claude 에 닿는 때: 첫 메시지 뒤 최대 10분 안에 받아 그다음 실행부터. 바로 받으려면 claude plugin marketplace update ${d.market} && claude plugin update ${d.key}`);
 }
 
 async function status(a) {
@@ -574,5 +551,5 @@ async function secret(a) {
 }
 
 const a = args(process.argv.slice(2));
-const CMDS = {login, secret, setup, ci, test, approve, wait: follow, deploy, status, mode, _bg: bg};
+const CMDS = {login, secret, setup, ci, test, wait: follow, deploy, status, mode, _bg: bg};
 (CMDS[a._[0]] || (() => die(`사용: kitdev ${Object.keys(CMDS).join("|")}`, 2)))(a);

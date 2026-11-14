@@ -13,7 +13,7 @@ description: 사내 MCP 개발 환경 구성 — 지금 워크스페이스에 go
 powershell -NoProfile -ExecutionPolicy Bypass -File "<플러그인 폴더>/scripts/node.ps1"
 ```
 - PC 에 Node 가 없으면 사내 키트에서 휴대용 Node 를 받아 쓴다(설치·관리자 권한·재시작 없음). 사용자에게 Node 를 설치하라고 하지 않는다.
-- 맥·리눅스는 `node`.
+- 개발자 PC 는 윈도우 11 만 지원한다(맥·리눅스면 setup 이 멈추고 그 까닭을 알려 준다).
 
 ## 순서
 1. 사내 MCP 키트 주소를 확인한다.
