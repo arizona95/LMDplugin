@@ -2,9 +2,9 @@
 // 사내 MCP 개발 키트 — 개발 플러그인 스크립트(워크스페이스 폴더에서 실행)
 //   (윈도우에서 Node 가 없으면 먼저 scripts/node.ps1 — 사내 키트의 휴대용 Node 를 받아 그 경로를 알려 준다)
 //   login  [--check 1 | --signup 1] [--kit <주소>]          사내 Git 로그인 — check: 저장된 로그인 있나(창 없이) · signup: 가입 페이지를 브라우저로
-//   setup  --kit <주소> [--name <MCP 이름>] [--desc <설명>]   워크스페이스에 goose·srt·mcp-test 설치 + 사내 Git 저장소 연결
+//   setup  --kit <주소> [--name <MCP 이름>] [--desc <설명>]   워크스페이스에 goose·샌드박스·mcp-test 설치 + 사내 Git 저장소 연결
 //   ci     [-m <커밋 메시지>]                                  commit·push → 사내 CI 결과를 기다려 통과/실패(실패 줄만) 보고
-//   test   -t <질문> [--with-extension <명령>]                 CI 를 통과한 지금 코드만 goose(srt 샌드박스)에서 시험
+//   test   -t <질문> [--with-extension <명령>]                 CI 를 통과한 지금 코드만 goose(샌드박스 — 윈도우 MXC · 맥·리눅스 srt)에서 시험
 //   approve <번호> [--deny 1]                                시험 중 툴 호출 승인 요청에 답하고 이어서 결과를 기다림
 //   wait                                                     뒤에서 도는 시험의 다음 승인 요청·끝을 기다림
 //   deploy                                                   CI 를 통과한 커밋으로 배포 요청
@@ -152,7 +152,7 @@ function ensureIgnore() {
 
 function writeBom(file, text) { writeFileSync(file, "﻿" + text, "utf8"); }
 
-// 설치 스크립트에는 클라이언트·srt 파일 해시가 들어 있다 — 지난번에 받은 것과 다르면 키트가 바뀐 것이니 다시 설치(setup·test 공용)
+// 설치 스크립트에는 클라이언트·샌드박스 파일 해시가 들어 있다 — 지난번에 받은 것과 다르면 키트가 바뀐 것이니 다시 설치(setup·test 공용)
 async function ensureKit(kit, force) {
   const script = join(KIT, WIN ? "install.ps1" : "install.sh");
   const body = await kit.must("GET", WIN ? "/download/install.ps1" : "/download/install.sh", null, {raw: true});
@@ -226,7 +226,7 @@ async function setup(a) {
   kit.cred.approve();
   say(`사내 키트 ${pub} 로그인 확인 · goose ${me.version}`);
 
-  // 1) 워크스페이스에 goose · srt · mcp-test (사내 설치 스크립트를 KIT_DIR 로)
+  // 1) 워크스페이스에 goose · 샌드박스 · mcp-test (사내 설치 스크립트를 KIT_DIR 로)
   await ensureKit(kit, a.reinstall);
 
   // 2) 사내 Git 저장소 연결
@@ -266,7 +266,7 @@ async function setup(a) {
   }
   writeFileSync(CONF, JSON.stringify({public: pub, repo}, null, 1));
   say(`준비 끝 — 저장소 ${pub}/git/${repo} · 시험 도구 ${KIT}`);
-  if (WIN) say(`처음 한 번만: 관리자 PowerShell 에서 샌드박스 준비 → & "${process.execPath}" "${join(KIT, "srt-bundle", "node_modules", "@anthropic-ai", "sandbox-runtime", "dist", "cli.js")}" windows-install --proxy-port-range 60080-60143`);
+  // 윈도우 샌드박스는 MXC(관리자 권한 없음) — 처음 한 번 준비가 없다
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));

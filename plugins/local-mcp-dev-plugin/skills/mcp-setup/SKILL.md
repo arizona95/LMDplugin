@@ -1,6 +1,6 @@
 ---
 name: mcp-setup
-description: 사내 MCP 개발 환경 구성 — 지금 워크스페이스에 goose 시험 환경(goose·srt 샌드박스·mcp-test)을 받고 사내 Git 저장소(CI 워크플로 포함)를 연결한다. "환경 구성해줘", "MCP 개발 준비", "goose 설치" 일 때.
+description: 사내 MCP 개발 환경 구성 — 지금 워크스페이스에 goose 시험 환경(goose·샌드박스·mcp-test)을 받고 사내 Git 저장소(CI 워크플로 포함)를 연결한다. "환경 구성해줘", "MCP 개발 준비", "goose 설치" 일 때.
 ---
 
 # 사내 MCP 개발 환경 구성
@@ -35,10 +35,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "<플러그인 폴더>/scrip
    ```
    "<node>" "<스크립트>" setup [--kit <주소>] --name <이름> --desc "<한 줄 설명>"
    ```
-   - goose·srt·mcp-test 가 워크스페이스 `.kit/` 에 설치된다.
+   - goose·샌드박스·mcp-test 가 워크스페이스 `.kit/` 에 설치된다.
    - 저장소에는 시작 코드와 `.gitea/workflows/kit-ci.yml` 이 들어간다.
-5. 출력 마지막의 "처음 한 번만" 줄(윈도우 샌드박스 준비)이 있으면 사용자에게 그대로 전한다.
-   - 관리자 PowerShell 에서 실행해야 하는 명령이다. 내가 대신 실행하지 않는다.
+5. 윈도우 샌드박스(MXC)는 관리자 권한·처음 한 번 준비가 없다. 사용자에게 관리자 PowerShell 을 열라고 하지 않는다.
 
 ## 실패하면
 - `KITDEV-FAIL:` 뒤의 까닭을 읽고 그대로 고칠 수 있으면 고친 뒤 다시 실행한다. 예: 이름 형식, 다른 저장소에 연결된 폴더.
