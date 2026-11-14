@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // 사내 MCP 개발 키트 — 개발 플러그인 스크립트(워크스페이스 폴더에서 실행)
+//   login  [--check 1 | --signup 1] [--kit <주소>]          사내 Git 로그인 — check: 저장된 로그인 있나(창 없이) · signup: 가입 페이지를 브라우저로
 //   setup  --kit <주소> [--name <MCP 이름>] [--desc <설명>]   워크스페이스에 goose·srt·mcp-test 설치 + 사내 Git 저장소 연결
 //   ci     [-m <커밋 메시지>]                                  commit·push → 사내 CI 결과를 기다려 통과/실패(실패 줄만) 보고
 //   test   -t <질문> [--with-extension <명령>]                 CI 를 통과한 지금 코드만 goose(srt 샌드박스)에서 시험
@@ -163,9 +164,52 @@ async function ensureKit(kit, force) {
   } else say(`goose 시험 환경은 최신입니다 (${KIT})`);
 }
 
-async function setup(a) {
+function kitAddr(a) {
   const pub = (a.kit || readJson(CONF)?.public || readJson(PLUGIN_KIT)?.public || "").replace(/\/+$/, "");
   if (!/^https:\/\/[^/]+/.test(pub)) die("사내 MCP 키트 주소가 필요합니다 — 예: mcp-setup --kit https://mcp.사내도메인");
+  return pub;
+}
+
+function openBrowser(url) {
+  const [cmd, argv] = WIN ? ["cmd", ["/c", "start", "", url]] : process.platform === "darwin" ? ["open", [url]] : ["xdg-open", [url]];
+  try { spawn(cmd, argv, {detached: true, stdio: "ignore"}).unref(); } catch { /* 못 열면 주소를 보고 직접 연다 */ }
+}
+
+// 환경 구성 첫 단계 — 계정이 있나부터. 없으면 가입 페이지, 있으면 Git Credential Manager 로그인 창
+async function login(a) {
+  const pub = kitAddr(a);
+  if (a.signup) {
+    const url = `${pub}/git/user/sign_up`;
+    openBrowser(url);
+    say(`KITDEV-SIGNUP: 브라우저에 사내 Git 가입 페이지를 열었습니다 — ${url}`);
+    say("가입을 마치면 알려 주세요. 그다음 로그인 창(Git Credential Manager)에 그 계정을 넣습니다.");
+    return;
+  }
+  if (a.check) {
+    // 창을 띄우지 않고 저장된 것만 본다 — 없거나 키트가 거절하면 '없음'
+    const u = new URL(pub);
+    const r = run("git", ["credential", "fill"], {input: `protocol=https\nhost=${u.host}\npath=git\n\n`,
+      // VS Code·Cursor 터미널의 GIT_ASKPASS 는 입력을 기다리며 멈춘다 — 확인할 때는 끈다
+      env: {...process.env, GCM_INTERACTIVE: "never", GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "", SSH_ASKPASS: ""}, timeout: 20000});
+    const user = /^username=(.*)$/m.exec(r.stdout || "")?.[1], pw = /^password=(.*)$/m.exec(r.stdout || "")?.[1];
+    let ok = false;
+    if (r.status === 0 && user && pw) {
+      try {
+        const res = await fetch(`${pub}/api/download`, {headers: {Authorization: `Basic ${Buffer.from(`${user}:${pw}`).toString("base64")}`}, redirect: "manual"});
+        ok = res.status === 200;
+      } catch (e) { die(`${pub} 에 닿지 않습니다: ${e.cause?.code || e.message}`); }
+    }
+    say(ok ? `KITDEV-LOGIN: 로그인돼 있음 — 계정 ${user}` : "KITDEV-LOGIN: 저장된 로그인 없음 — 사용자에게 사내 Git 계정이 있는지 묻는다");
+    return;
+  }
+  const kit = new Kit(pub);
+  await kit.must("GET", "/api/download");
+  kit.cred.approve();
+  say(`KITDEV-LOGIN: 로그인 확인 — 계정 ${kit.cred.user} (다음부터는 묻지 않습니다)`);
+}
+
+async function setup(a) {
+  const pub = kitAddr(a);
   if (run("git", ["--version"]).status !== 0) die("git 이 없습니다 — Git for Windows 를 설치하세요");
   mkdirSync(KIT, {recursive: true});
   const kit = new Kit(pub);
@@ -474,5 +518,5 @@ async function status(a) {
 }
 
 const a = args(process.argv.slice(2));
-const CMDS = {setup, ci, test, approve, wait: follow, deploy, status, mode, _bg: bg};
+const CMDS = {login, setup, ci, test, approve, wait: follow, deploy, status, mode, _bg: bg};
 (CMDS[a._[0]] || (() => die(`사용: kitdev ${Object.keys(CMDS).join("|")}`, 2)))(a);
