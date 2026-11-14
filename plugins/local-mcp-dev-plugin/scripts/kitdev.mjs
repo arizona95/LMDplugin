@@ -10,6 +10,8 @@
 //   deploy                                                   CI 를 통과한 커밋으로 배포 요청
 //   mode   [on|off]                                          실행 모드 보기·바꾸기 — on: CI 켬(통과 커밋만 · 바깥 네트워크 열림)
 //                                                            off: CI 끔(검사 없이 바로 · 관리자 화이트리스트 네트워크만)
+//   secret set <이름> | list                                 MCP 비밀값 — set: 이 PC 에 입력 창을 띄워 받은 값을 사내 키 저장소(이 저장소 비밀값)에 바로 넣는다
+//                                                            (값은 Claude 대화·명령줄·파일에 남지 않음) · kit-mcp.json secrets 에 이름도 넣는다
 //   status [<요청 번호>]                                      배포 요청 상태
 // 키를 PC 에 새로 저장하지 않는다 — 사내 Git 자격 증명(Git Credential Manager 가 OS 저장소에 둔 것)을 그때그때 꺼내 쓴다.
 import { spawnSync, spawn } from "node:child_process";
@@ -524,6 +526,48 @@ async function status(a) {
   deployGuide(r);
 }
 
+// 비밀값 입력 창 — 값은 이 프로세스 메모리로만 오고 바로 키트로 간다(Claude 가 보는 출력에 찍지 않는다)
+function askSecret(name) {
+  const msg = `사내 MCP 비밀값 ${name} 을 넣어 주세요 — 사내 키 저장소에만 저장됩니다`;
+  let r;
+  if (WIN) {
+    const ps = `$c = Get-Credential -UserName '${name}' -Message '${msg.replace(/'/g, "''")}'; if ($c) { [Console]::OutputEncoding = [Text.Encoding]::UTF8; [Console]::Out.Write($c.GetNetworkCredential().Password) } else { exit 2 }`;
+    r = spawnSync("powershell", ["-NoProfile", "-Command", ps], {encoding: "utf8"});
+  } else if (process.platform === "darwin") {
+    r = spawnSync("osascript", ["-e", `text returned of (display dialog "${msg}" default answer "" with hidden answer with title "사내 MCP 비밀값")`], {encoding: "utf8"});
+    if (r.stdout) r.stdout = r.stdout.replace(/\n$/, "");
+  } else {
+    r = spawnSync("zenity", ["--password", `--title=${msg}`], {encoding: "utf8"});
+    if (r.error) die("입력 창(zenity)이 없습니다 — 사내 Git 저장소 설정 > Actions > Secrets 에서 직접 넣으세요");
+    if (r.stdout) r.stdout = r.stdout.replace(/\n$/, "");
+  }
+  if (r.status !== 0 || !r.stdout) die(`${name} 입력을 취소했습니다`);
+  return r.stdout;
+}
+
+async function secret(a) {
+  const c = conf();
+  const kit = new Kit(c.public);
+  const [, sub, name] = a._;
+  if (sub === "list") {
+    const r = await kit.call("GET", `/repos/${c.repo}/actions/secrets`, null, {git: true});
+    const have = (r.data || []).map(x => x.name);
+    const want = readJson(join(WS, "kit-mcp.json"), {})?.secrets || [];
+    say(`사내 키 저장소(${c.repo}) 비밀값: ${have.join(", ") || "없음"}`);
+    const miss = want.filter(n => !have.includes(n.toUpperCase()));
+    if (miss.length) say(`kit-mcp.json 에 적혔는데 아직 없는 것: ${miss.join(", ")} — secret set <이름>`);
+    return;
+  }
+  if (sub !== "set" || !/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(name || "") || /^(GITEA|GITHUB)_/i.test(name)) die("사용: secret set <이름(영문·숫자·_ , GITEA_/GITHUB_ 로 시작 금지)> | secret list");
+  say(`이 PC 에 ${name} 입력 창을 띄웁니다 — 값을 넣고 확인을 누르세요`);
+  const value = askSecret(name);
+  const r = await kit.call("PUT", `/repos/${c.repo}/actions/secrets/${name.toUpperCase()}`, {data: value}, {git: true});
+  if (r.error !== undefined && ![201, 204].includes(r.status)) die(`키 저장소에 넣지 못했습니다: ${r.error}`);
+  const mf = join(WS, "kit-mcp.json"), m = readJson(mf);
+  if (m && !(m.secrets || []).includes(name)) { m.secrets = [...(m.secrets || []), name]; writeFileSync(mf, JSON.stringify(m, null, 2) + "\n"); }
+  say(`KITDEV-SECRET: ${name} 을 사내 키 저장소(${c.repo})에 넣었습니다 — 시험(goose)과 배포된 MCP 실행 때 환경 변수 ${name} 으로 들어갑니다`);
+}
+
 const a = args(process.argv.slice(2));
-const CMDS = {login, setup, ci, test, approve, wait: follow, deploy, status, mode, _bg: bg};
+const CMDS = {login, secret, setup, ci, test, approve, wait: follow, deploy, status, mode, _bg: bg};
 (CMDS[a._[0]] || (() => die(`사용: kitdev ${Object.keys(CMDS).join("|")}`, 2)))(a);

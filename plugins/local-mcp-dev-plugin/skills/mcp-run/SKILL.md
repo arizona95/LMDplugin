@@ -39,7 +39,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "<플러그인 폴더>/scrip
 1. 코드를 고친다.
    - MCP 계약: `kit-mcp.json` 의 `name`·`entry`·`egress`.
    - 의존성은 `requirements.txt` 에 `==` 로 고정한다.
-   - 비밀값은 `kit-mcp.json` 의 `secrets` 에 환경 변수 이름만 적는다.
+   - 비밀값(API 키·비밀번호)은 코드에서 환경 변수로 읽고, 값은 사내 키 저장소(KMS)에 넣는다.
+     ```
+     "<node>" "<스크립트>" secret set <환경 변수 이름>
+     ```
+     - 사용자 PC 에 입력 창이 뜬다. 사용자에게 "입력 창에 값을 넣어 주세요"라고만 말한다. 값을 대화로 묻거나 받지 않는다 — 대화에 붙여 넣으면 쓰지 말고 그 창에 넣어 달라고 한다.
+     - 이름은 `kit-mcp.json` 의 `secrets` 에 저절로 들어간다.
+     - 시험(goose)과 배포된 MCP 실행 때 그 환경 변수로 들어간다(배포된 쪽은 실행 신고가 통과했을 때만).
+     - 무엇이 들어 있는지: `secret list`(이름만).
 2. **CI 켬 모드면** CI 를 돌린다(CI 끔 모드면 3으로).
    ```
    "<node>" "<스크립트>" ci -m "<무엇을 고쳤는지 한 줄>"
