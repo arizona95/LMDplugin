@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // 사내 MCP 개발 키트 — 개발 플러그인 스크립트(워크스페이스 폴더에서 실행)
+//   (윈도우에서 Node 가 없으면 먼저 scripts/node.ps1 — 사내 키트의 휴대용 Node 를 받아 그 경로를 알려 준다)
 //   login  [--check 1 | --signup 1] [--kit <주소>]          사내 Git 로그인 — check: 저장된 로그인 있나(창 없이) · signup: 가입 페이지를 브라우저로
 //   setup  --kit <주소> [--name <MCP 이름>] [--desc <설명>]   워크스페이스에 goose·srt·mcp-test 설치 + 사내 Git 저장소 연결
 //   ci     [-m <커밋 메시지>]                                  commit·push → 사내 CI 결과를 기다려 통과/실패(실패 줄만) 보고
@@ -48,6 +49,12 @@ if (!process.env.KITDEV_REEXEC) {
     const r = spawnSync(process.execPath, [...flags, ...process.argv.slice(1)], {stdio: "inherit", env});
     process.exit(r.status ?? 1);
   }
+}
+
+// 휴대용 Node(node.ps1 이 받은 것)로 돌 때도 설치 스크립트·자식 프로세스가 같은 node 를 찾게
+{
+  const bin = dirname(process.execPath), key = Object.keys(process.env).find(k => k.toUpperCase() === "PATH") || "PATH";
+  if (!(process.env[key] || "").split(WIN ? ";" : ":").includes(bin)) process.env[key] = `${bin}${WIN ? ";" : ":"}${process.env[key] || ""}`;
 }
 
 const say = m => console.log(m);
@@ -252,7 +259,7 @@ async function setup(a) {
   }
   writeFileSync(CONF, JSON.stringify({public: pub, repo}, null, 1));
   say(`준비 끝 — 저장소 ${pub}/git/${repo} · 시험 도구 ${KIT}`);
-  if (WIN) say(`처음 한 번만: 관리자 PowerShell 에서 샌드박스 준비 → node "${join(KIT, "srt-bundle", "node_modules", "@anthropic-ai", "sandbox-runtime", "dist", "cli.js")}" windows-install --proxy-port-range 60080-60143`);
+  if (WIN) say(`처음 한 번만: 관리자 PowerShell 에서 샌드박스 준비 → & "${process.execPath}" "${join(KIT, "srt-bundle", "node_modules", "@anthropic-ai", "sandbox-runtime", "dist", "cli.js")}" windows-install --proxy-port-range 60080-60143`);
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));

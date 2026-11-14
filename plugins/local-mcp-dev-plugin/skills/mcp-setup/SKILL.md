@@ -5,8 +5,15 @@ description: 사내 MCP 개발 환경 구성 — 지금 워크스페이스에 go
 
 # 사내 MCP 개발 환경 구성
 
-스크립트: `node "${CLAUDE_PLUGIN_ROOT}/scripts/kitdev.mjs"`
+스크립트: `"<node>" "${CLAUDE_PLUGIN_ROOT}/scripts/kitdev.mjs"`
 (`${CLAUDE_PLUGIN_ROOT}` 가 치환되지 않았으면, 이 스킬의 Base directory 기준 `../../scripts/kitdev.mjs`)
+
+실행기 `<node>`: 윈도우는 이 세션에서 처음 한 번 아래를 실행하고, 마지막 줄 `KITDEV-NODE:` 뒤의 경로를 쓴다.
+```
+powershell -NoProfile -ExecutionPolicy Bypass -File "<플러그인 폴더>/scripts/node.ps1"
+```
+- PC 에 Node 가 없으면 사내 키트에서 휴대용 Node 를 받아 쓴다(설치·관리자 권한·재시작 없음). 사용자에게 Node 를 설치하라고 하지 않는다.
+- 맥·리눅스는 `node`.
 
 ## 순서
 1. 사내 MCP 키트 주소를 확인한다.
@@ -14,19 +21,19 @@ description: 사내 MCP 개발 환경 구성 — 지금 워크스페이스에 go
    - 그것도 없고 사용자가 주지 않았으며 `.kit/workspace.json` 도 없으면 한 번만 묻는다. 예: `https://mcp.사내도메인`
 2. 사내 Git 로그인부터 확인한다(이름을 묻기 전에).
    ```
-   node "<스크립트>" login --check 1
+   "<node>" "<스크립트>" login --check 1
    ```
    - `KITDEV-LOGIN: 로그인돼 있음` 이면 3으로.
    - `저장된 로그인 없음` 이면 사용자에게 묻는다(AskUserQuestion): "사내 Git(키트) 계정이 있나요?" — 있음 / 없음(새로 가입).
-     - 없음: `node "<스크립트>" login --signup 1` — 브라우저에 가입 페이지가 열린다. 사용자에게 가입하고 끝나면 말해 달라고 한다.
-     - 있음, 또는 가입을 마쳤으면: `node "<스크립트>" login` — 로그인 창(Git Credential Manager)이 뜬다. 방금 계정으로 로그인하라고 알린다. `KITDEV-LOGIN: 로그인 확인` 이 나오면 3으로.
+     - 없음: `"<node>" "<스크립트>" login --signup 1` — 브라우저에 가입 페이지가 열린다. 사용자에게 가입하고 끝나면 말해 달라고 한다.
+     - 있음, 또는 가입을 마쳤으면: `"<node>" "<스크립트>" login` — 로그인 창(Git Credential Manager)이 뜬다. 방금 계정으로 로그인하라고 알린다. `KITDEV-LOGIN: 로그인 확인` 이 나오면 3으로.
    - 한 번 로그인하면 그 뒤 setup·ci·test·deploy 는 다시 묻지 않는다(저장된 것이 거절되면 스크립트가 지우고 한 번 다시 묻는다 — 손으로 git credential reject 하라고 하지 않는다).
 3. 이 폴더가 사내 Git 저장소가 아니면 새 MCP 이름을 정한다.
    - 이름은 영문 소문자로 시작하고 소문자·숫자·`-` 만 쓴다(2~39자).
    - 사용자가 말한 MCP 용도에서 짓고, 정한 이름을 알려 준다.
 4. 실행한다(워크스페이스 폴더에서).
    ```
-   node "<스크립트>" setup [--kit <주소>] --name <이름> --desc "<한 줄 설명>"
+   "<node>" "<스크립트>" setup [--kit <주소>] --name <이름> --desc "<한 줄 설명>"
    ```
    - goose·srt·mcp-test 가 워크스페이스 `.kit/` 에 설치된다.
    - 저장소에는 시작 코드와 `.gitea/workflows/kit-ci.yml` 이 들어간다.

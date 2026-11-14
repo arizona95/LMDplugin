@@ -5,14 +5,21 @@ description: 사내 MCP 배포 요청 — CI 를 통과한 지금 커밋으로 �
 
 # 사내 MCP 배포 = CI 자동 검사 + 관리자 승인
 
-스크립트: `node "${CLAUDE_PLUGIN_ROOT}/scripts/kitdev.mjs"`
+스크립트: `"<node>" "${CLAUDE_PLUGIN_ROOT}/scripts/kitdev.mjs"`
 (치환되지 않았으면 이 스킬의 Base directory 기준 `../../scripts/kitdev.mjs`)
+
+실행기 `<node>`: 윈도우는 이 세션에서 처음 한 번 아래를 실행하고, 마지막 줄 `KITDEV-NODE:` 뒤의 경로를 쓴다.
+```
+powershell -NoProfile -ExecutionPolicy Bypass -File "<플러그인 폴더>/scripts/node.ps1"
+```
+- PC 에 Node 가 없으면 사내 키트에서 휴대용 Node 를 받아 쓴다(설치·관리자 권한·재시작 없음). 사용자에게 Node 를 설치하라고 하지 않는다.
+- 맥·리눅스는 `node`.
 
 ## 배포 요청
 1. 올리지 않은 변경이 있으면 먼저 `mcp-run` 스킬의 CI 단계(`ci`)로 통과시킨다.
 2. 요청을 낸다.
    ```
-   node "<스크립트>" deploy
+   "<node>" "<스크립트>" deploy
    ```
    - 키트가 그 커밋의 CI 통과를 다시 확인한다. 통과하지 않은 커밋은 거부된다.
    - 그다음 중앙 검사(LLM 의미론 검사 포함)를 돌린다.
@@ -20,7 +27,7 @@ description: 사내 MCP 배포 요청 — CI 를 통과한 지금 커밋으로 �
 
 ## 상태 보기
 ```
-node "<스크립트>" status [<요청 번호>]
+"<node>" "<스크립트>" status [<요청 번호>]
 ```
 - 반려되면 사유와 걸린 항목(심각도·파일:줄)을 읽고 고친 뒤 `ci` → `deploy` 로 다시 낸다.
 - "배포됐어?"·"승인 났어?" 라고 하면 이 명령을 돌리고 `배포 확인` 줄을 그대로 알린다.
