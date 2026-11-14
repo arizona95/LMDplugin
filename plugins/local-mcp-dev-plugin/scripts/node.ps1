@@ -1,5 +1,5 @@
 ﻿# 사내 MCP 개발 키트 — kitdev.mjs 를 돌릴 Node 찾기(윈도우)
-# PC 에 Node 22.12 이상이 있으면 그것, 없으면 사내 키트에서 휴대용 Node 를 받아 %LOCALAPPDATA%\mcp-kit\node 에 푼다(설치·관리자 권한 없음).
+# PC 에 Node 22.12 이상이 있으면 그것, 없으면 사내 키트에서 휴대용 Node 를 받아 %USERPROFILE%\.mcp-kit\node 에 푼다(설치·관리자 권한 없음).
 # 마지막 줄: KITDEV-NODE: <node.exe 전체 경로> — 이 세션의 kitdev 실행은 그 경로로 한다.
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -13,7 +13,9 @@ function Ok($exe) {
 $sys = (Get-Command node -ErrorAction SilentlyContinue).Source
 if (Ok $sys) { Write-Output "KITDEV-NODE: $sys"; exit 0 }
 
-$dir = Join-Path $env:LOCALAPPDATA 'mcp-kit\node'
+# %LOCALAPPDATA% 는 안 쓴다 — Claude 데스크톱(MSIX 패키지 앱) 안에서 쓴 파일은 앱 전용 가상 폴더(Packages\Claude_…\LocalCache)로 옮겨져
+# 앱 밖(관리자 PowerShell 의 샌드박스 준비 등)에서는 그 경로에 없다(2026-11-15 윈도우 개발자 PC 실측). 사용자 폴더 바로 아래는 가상화되지 않는다.
+$dir = Join-Path $env:USERPROFILE '.mcp-kit\node'
 $exe = Join-Path $dir 'node.exe'
 if (-not (Ok $exe)) {
   # 키트 주소 — 사내 마켓플레이스 플러그인의 kit.json, 아니면 이 워크스페이스의 .kit\workspace.json
