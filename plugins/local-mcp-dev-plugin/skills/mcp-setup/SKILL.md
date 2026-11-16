@@ -8,12 +8,11 @@ description: 사내 MCP 개발 환경 구성 — 지금 워크스페이스에 go
 스크립트: `"<node>" "${CLAUDE_PLUGIN_ROOT}/scripts/kitdev.mjs"`
 (`${CLAUDE_PLUGIN_ROOT}` 가 치환되지 않았으면, 이 스킬의 Base directory 기준 `../../scripts/kitdev.mjs`)
 
-실행기 `<node>`: 윈도우는 이 세션에서 처음 한 번 아래를 실행하고, 마지막 줄 `KITDEV-NODE:` 뒤의 경로를 쓴다.
-```
-powershell -NoProfile -ExecutionPolicy Bypass -File "<플러그인 폴더>/scripts/node.ps1"
-```
-- PC 에 Node 가 없으면 사내 키트에서 휴대용 Node 를 받아 쓴다(설치·관리자 권한·재시작 없음). 사용자에게 Node 를 설치하라고 하지 않는다.
-- 개발자 PC 는 윈도우 11 만 지원한다(맥·리눅스면 setup 이 멈추고 그 까닭을 알려 준다).
+실행기 `<node>`: 이 세션에서 처음 한 번 아래를 실행하고, 마지막 줄 `KITDEV-NODE:` 뒤의 경로를 쓴다.
+- 윈도우: `powershell -NoProfile -ExecutionPolicy Bypass -File "<플러그인 폴더>/scripts/node.ps1"`
+- 리눅스: `sh "<플러그인 폴더>/scripts/node.sh"`
+- PC 에 Node 가 없으면 사내 Git 패키지 저장소에서 휴대용 Node 를 받아 쓴다(플러그인 `tools.json` · 설치·관리자 권한·재시작 없음). 사용자에게 Node 를 설치하라고 하지 않는다.
+- 개발자 PC 는 윈도우 11 과 리눅스를 지원한다. 리눅스는 관리자가 처음 한 번 샌드박스 준비(bubblewrap·slirp4netns·AppArmor 프로필)를 해 둬야 한다 — 없으면 setup 이 그 명령을 알려 주고 멈춘다. 그 줄을 사용자에게 그대로 전하고, 내가 sudo 로 대신 하지 않는다.
 
 ## 순서
 1. 사내 MCP 키트 주소를 확인한다.
@@ -26,7 +25,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "<플러그인 폴더>/scrip
    - `KITDEV-LOGIN: 로그인돼 있음` 이면 3으로.
    - `저장된 로그인 없음` 이면 사용자에게 묻는다(AskUserQuestion): "사내 Git(키트) 계정이 있나요?" — 있음 / 없음(새로 가입).
      - 없음: `"<node>" "<스크립트>" login --signup 1` — 브라우저에 가입 페이지가 열린다. 사용자에게 가입하고 끝나면 말해 달라고 한다.
-     - 있음, 또는 가입을 마쳤으면: `"<node>" "<스크립트>" login` — 로그인 창(Git Credential Manager)이 뜬다. 방금 계정으로 로그인하라고 알린다. `KITDEV-LOGIN: 로그인 확인` 이 나오면 3으로.
+     - 있음, 또는 가입을 마쳤으면: `"<node>" "<스크립트>" login` — 로그인 창(Git Credential Manager)이 뜬다. 방금 계정으로 로그인하라고 알린다. 리눅스에 GCM 이 없으면 스크립트가 사내 Git 패키지 저장소에서 받아 둔다(사용자에게 GCM 을 설치하라고 하지 않는다). `KITDEV-LOGIN: 로그인 확인` 이 나오면 3으로.
    - 한 번 로그인하면 그 뒤 setup·ci·test·deploy 는 다시 묻지 않는다(저장된 것이 거절되면 스크립트가 지우고 한 번 다시 묻는다 — 손으로 git credential reject 하라고 하지 않는다).
 3. 이 폴더가 사내 Git 저장소가 아니면 새 MCP 이름을 정한다.
    - 이름은 영문 소문자로 시작하고 소문자·숫자·`-` 만 쓴다(2~39자).
@@ -37,7 +36,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "<플러그인 폴더>/scrip
    ```
    - goose·샌드박스·mcp-test 가 워크스페이스 `.kit/` 에 설치된다.
    - 저장소에는 시작 코드와 `.gitea/workflows/kit-ci.yml` 이 들어간다.
-5. 윈도우 샌드박스(MXC)는 관리자 권한·처음 한 번 준비가 없다. 사용자에게 관리자 PowerShell 을 열라고 하지 않는다.
+5. 윈도우 샌드박스(MXC)는 관리자 권한·처음 한 번 준비가 없다. 사용자에게 관리자 PowerShell 을 열라고 하지 않는다. 리눅스에서 setup 이 '관리자가 처음 한 번' 줄을 내면 그대로 사용자에게 전한다.
 
 ## 실패하면
 - `KITDEV-FAIL:` 뒤의 까닭을 읽고 그대로 고칠 수 있으면 고친 뒤 다시 실행한다. 예: 이름 형식, 다른 저장소에 연결된 폴더.

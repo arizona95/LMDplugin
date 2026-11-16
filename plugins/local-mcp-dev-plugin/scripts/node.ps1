@@ -1,5 +1,5 @@
 ﻿# 사내 MCP 개발 키트 — kitdev.mjs 를 돌릴 Node 찾기(윈도우)
-# PC 에 Node 22.12 이상이 있으면 그것, 없으면 사내 키트에서 휴대용 Node 를 받아 %USERPROFILE%\.mcp-kit\node 에 푼다(설치·관리자 권한 없음).
+# PC 에 Node 22.12 이상이 있으면 그것, 없으면 사내 Git 패키지 저장소(플러그인 tools.json)에서 휴대용 Node 를 받아 %USERPROFILE%\.mcp-kit\node 에 푼다(설치·관리자 권한 없음).
 # 마지막 줄: KITDEV-NODE: <node.exe 전체 경로> — 이 세션의 kitdev 실행은 그 경로로 한다.
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -24,11 +24,16 @@ if (-not (Ok $exe)) {
     if (-not $pub -and (Test-Path $f)) { $pub = (Get-Content $f -Raw | ConvertFrom-Json).public }
   }
   if (-not $pub) { Write-Output 'KITDEV-FAIL: 사내 MCP 키트 주소를 모릅니다 — 사내 마켓플레이스에서 플러그인을 다시 받으세요'; exit 1 }
+  # 받을 판·파일·해시 = 플러그인 tools.json 의 "node/win-x64"(사내 Git 패키지 저장소에 있는 것)
+  $t = (Get-Content (Join-Path $PSScriptRoot '..\tools.json') -Raw | ConvertFrom-Json).tools.'node/win-x64'
+  if (-not $t) { Write-Output 'KITDEV-FAIL: 플러그인 tools.json 에 node/win-x64 가 없습니다 — 사내 마켓플레이스에서 플러그인을 다시 받으세요'; exit 1 }
   $zip = Join-Path $env:TEMP 'mcp-kit-node.zip'
   $tmp = Join-Path $env:TEMP 'mcp-kit-node'
-  Write-Output "Node 가 없어 사내 키트에서 휴대용 Node 를 받습니다(약 30MB, 설치 없음) — $dir"
+  $url = "$($pub.TrimEnd('/'))/download/tools/node/$($t.version)/$($t.file)"
+  Write-Output "Node 가 없어 사내 Git 패키지 저장소에서 휴대용 Node $($t.version) 을 받습니다(약 30MB, 설치 없음) — $dir"
   try {
-    Invoke-WebRequest -UseBasicParsing -Uri "$($pub.TrimEnd('/'))/download/runtime/node-win-x64.zip" -OutFile $zip
+    Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $zip
+    if ((Get-FileHash -Algorithm SHA256 $zip).Hash -ne $t.sha256.ToUpper()) { throw "받은 Node 의 sha256 이 tools.json 과 다릅니다 ($url)" }
     if (Test-Path $tmp) { Remove-Item -Recurse -Force $tmp }
     Expand-Archive -Path $zip -DestinationPath $tmp -Force
     if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
