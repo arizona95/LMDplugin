@@ -276,7 +276,12 @@ async function ensureKit(kit, force) {
     let r;
     if (WIN) {
       writeBom(script, body);
-      r = spawnSync("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script], {cwd: WS, env, stdio: "inherit"});
+      // Claude Code 의 Git Bash 에서 뜨면 PATH 앞에 Git 의 GNU tar 가 있다 — 'D:\...' 를 원격 호스트 D 로 읽어 못 푼다(2026-11-17 사내 윈도우 PC 실측).
+      // 윈도우 tar(System32) 를 앞에 두고, 출력은 UTF-8 로(파이프로 받으면 CP949 라 한글이 깨진다)
+      const pk = Object.keys(env).find(k => k.toUpperCase() === "PATH") || "PATH";
+      env[pk] = `${join(process.env.SystemRoot || "C:\\Windows", "System32")};${env[pk] || ""}`;
+      r = spawnSync("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+        `[Console]::OutputEncoding = [Text.Encoding]::UTF8; & '${script.replace(/'/g, "''")}'; exit 0`], {cwd: WS, env, stdio: "inherit"});
     } else {
       writeFileSync(script, body);
       r = spawnSync("sh", [script], {cwd: WS, env, stdio: "inherit"});
