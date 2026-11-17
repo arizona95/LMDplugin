@@ -155,7 +155,7 @@ function mustGit(...a) {
   return r.out;
 }
 
-const readJson = (f, d = null) => { try { return JSON.parse(readFileSync(f, "utf8")); } catch { return d; } };
+const readJson = (f, d = null) => { try { return JSON.parse(readFileSync(f, "utf8").replace(/^\uFEFF/, "")); } catch { return d; } };  // PowerShell 이 쓴 파일은 BOM 이 붙기도 한다
 const conf = () => readJson(CONF) || die("이 워크스페이스는 아직 준비되지 않았습니다 — 먼저 mcp-setup 을 실행하세요");
 
 // Git Credential Manager 로그인 창을 띄울 수 있게 — GIT_TERMINAL_PROMPT=0 이면 GCM 이 창까지 막는다
