@@ -118,6 +118,13 @@ if (!process.env.KITDEV_REEXEC) {
 }
 
 const say = m => console.log(m);
+// 연결 실패의 실제 까닭 — fetch 는 'fetch failed' 만 주고 까닭은 cause 에 있다. 인증서 확인 실패(OpenSSL X509 코드)는 네트워크 문제가 아니라고 따로 말한다
+const TLS_CODES = /^(UNSPECIFIED|UNABLE_TO_|SELF_SIGNED|DEPTH_ZERO|CERT_|ERR_TLS|INVALID_CA|INVALID_PURPOSE|HOSTNAME_MISMATCH|ERR_SSL)/;
+const netErr = e => {
+  const c = e.cause || e, code = c.code || "";
+  const msg = `${code}${c.message && c.message !== code ? ` ${c.message}` : ""}`.trim() || e.message;
+  return TLS_CODES.test(code) ? `인증서 확인 실패(${msg}) — 연결은 됐지만 이 PC 의 Node 가 받은 서버 인증서를 믿지 못합니다. 회사가 TLS 를 검사해 회사 인증서로 바꿔 주는 망이면 그 회사 루트 인증서가 윈도우 '신뢰할 수 있는 루트'에 있는지 관리자에게 확인하세요` : msg;
+};
 // 연결 실패 줄에 어느 길로 갔는지 붙인다 — 프록시가 틀렸는지 키트가 죽었는지 가르게
 const via = () => process.env.HTTPS_PROXY ? ` (회사 프록시 ${process.env.HTTPS_PROXY.replace(/\/\/[^@/]*@/, "//***@")} 경유 — 프록시 주소가 맞는지, 그 프록시가 키트 주소를 허용하는지 확인)` : " (프록시 없이 바로 연결)";
 function die(msg, code = 1) { console.log(`KITDEV-FAIL: ${msg}`); process.exit(code); }
@@ -187,7 +194,7 @@ async function fetchTool(pub, key, dest) {
     const r = await fetch(url);
     if (!r.ok) die(`${url} 을 받지 못했습니다(HTTP ${r.status}) — 관리자가 사내 Git 패키지 저장소에 올렸는지 확인하세요`);
     buf = Buffer.from(await r.arrayBuffer());
-  } catch (e) { die(`${url} 에 닿지 않습니다: ${e.cause?.code || e.message}${via()}`); }
+  } catch (e) { die(`${url} 에 닿지 않습니다: ${netErr(e)}${via()}`); }
   if (createHash("sha256").update(buf).digest("hex") !== t.sha256) die(`받은 ${t.file} 의 sha256 이 tools.json 과 다릅니다`);
   if (t.unpack === false) {
     mkdirSync(dest, {recursive: true});
@@ -228,7 +235,7 @@ class Kit {
     for (let i = 0; i < 2; i++) {
       const headers = {Authorization: this.auth(), ...(body ? {"Content-Type": "application/json"} : {})};
       try { r = await fetch(url, {method, headers, body: body ? JSON.stringify(body) : undefined, redirect: "manual"}); }
-      catch (e) { die(`${this.pub} 에 닿지 않습니다: ${e.cause?.code || e.message}${via()}`); }
+      catch (e) { die(`${this.pub} 에 닿지 않습니다: ${netErr(e)}${via()}`); }
       if (r.status !== 401) { if (!this.approved) { this.cred.approve(); this.approved = true; } break; }
       // 저장된 자격 증명이 낡았다(비밀번호 바뀜·지워진 토큰) — 지우고 GCM 로그인 창으로 한 번 다시 묻는다
       this.cred.reject();
@@ -324,7 +331,7 @@ async function login(a) {
       try {
         const res = await fetch(`${pub}/api/download`, {headers: {Authorization: `Basic ${Buffer.from(`${user}:${pw}`).toString("base64")}`}, redirect: "manual"});
         ok = res.status === 200;
-      } catch (e) { die(`${pub} 에 닿지 않습니다: ${e.cause?.code || e.message}${via()}`); }
+      } catch (e) { die(`${pub} 에 닿지 않습니다: ${netErr(e)}${via()}`); }
     }
     say(ok ? `KITDEV-LOGIN: 로그인돼 있음 — 계정 ${user}` : "KITDEV-LOGIN: 저장된 로그인 없음 — 사용자에게 사내 Git 계정이 있는지 묻는다");
     return;
