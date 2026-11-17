@@ -29,6 +29,40 @@ const LAST = join(KIT, "last-ci.json");
 // 사내 마켓플레이스에서 받은 플러그인에는 그 회사 키트 주소가 들어 있다(kit.json)
 const PLUGIN_KIT = join(dirname(fileURLToPath(import.meta.url)), "..", "kit.json");
 
+// 프록시 찾기 — 환경 변수 → git http.proxy → OS 설정(윈도우: 인터넷 설정·PAC 를 키트 주소로 물어봄 · 리눅스: GNOME 수동 설정)
+function findProxy() {
+  const e = process.env;
+  const local = ["localhost", "127.0.0.1", "::1"];
+  const mk = (url, from, extra = []) => {
+    if (!/^[a-z]+:\/\//i.test(url)) url = `http://${url}`;
+    const have = (e.NO_PROXY || e.no_proxy || "").split(",").map(x => x.trim()).filter(Boolean);
+    return {url, from, show: url.replace(/\/\/[^@/]*@/, "//***@"), bypass: [...new Set([...have, ...extra, ...local])].join(",")};
+  };
+  const v = e.HTTPS_PROXY || e.https_proxy || e.HTTP_PROXY || e.http_proxy;
+  if (v) return mk(v, "환경 변수");
+  const g = spawnSync("git", ["config", "--get", "http.proxy"], {encoding: "utf8"});
+  if (!g.error && g.status === 0 && g.stdout.trim()) return mk(g.stdout.trim(), "git 설정 http.proxy");
+  const i = process.argv.indexOf("--kit");
+  const pub = f => { try { return JSON.parse(readFileSync(f, "utf8")).public; } catch { return ""; } };  // readJson 은 아래에서 정의된다
+  const target = (i > 0 && process.argv[i + 1]) || pub(CONF) || pub(PLUGIN_KIT) || "https://nodejs.org";
+  if (WIN) {
+    // GetSystemWebProxy = 브라우저와 같은 판단(수동 프록시·PAC·WPAD·예외 목록). 키트에 바로 가면 아무것도 안 낸다
+    const ps = `$u=[Uri]'${target.replace(/'/g, "")}'; $p=[System.Net.WebRequest]::GetSystemWebProxy().GetProxy($u); ` +
+      "if($p -and $p.Authority -ne $u.Authority){ $p.AbsoluteUri; " +
+      "(Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings' -ErrorAction SilentlyContinue).ProxyOverride }";
+    const r = spawnSync("powershell", ["-NoProfile", "-Command", ps], {encoding: "utf8", timeout: 30000});
+    const [url, over = ""] = (r.stdout || "").split(/\r?\n/).map(x => x.trim());
+    if (url) return mk(url.replace(/\/$/, ""), "윈도우 인터넷 설정", over.split(";").map(x => x.trim().replace(/^\*\./, ".")).filter(x => x && x !== "<local>"));
+    return null;
+  }
+  const gs = k => (spawnSync("gsettings", ["get", ...k], {encoding: "utf8"}).stdout || "").trim().replace(/^'|'$/g, "");
+  if (gs(["org.gnome.system.proxy", "mode"]) === "manual") {
+    const host = gs(["org.gnome.system.proxy.https", "host"]), port = gs(["org.gnome.system.proxy.https", "port"]);
+    if (host) return mk(`${host}:${port || 8080}`, "GNOME 프록시 설정");
+  }
+  return null;
+}
+
 // 사내 CA 는 회사 PC 의 OS 인증서 저장소에 있다 — Node 가 그것을 쓰게 한 번 다시 띄운다.
 // --use-system-ca 가 없는 Node(22.15·23.8 전 — 2026-11-14 Azure 사용자 PC 22.12 실측)는 OS 신뢰 저장소(윈도우는 PEM 으로 내보내서)를 NODE_EXTRA_CA_CERTS 로
 if (!process.env.KITDEV_REEXEC) {
@@ -58,7 +92,20 @@ if (!process.env.KITDEV_REEXEC) {
       } else env.NODE_EXTRA_CA_CERTS = sys;
     }
   }
-  if (flags.length || env.NODE_EXTRA_CA_CERTS !== process.env.NODE_EXTRA_CA_CERTS) {
+  // 회사 프록시 — 사내망 PC 는 바깥(키트 포함)이 프록시로만 나가는데, Node fetch 는 HTTPS_PROXY 를 NODE_USE_ENV_PROXY=1 일 때만 따른다
+  // (Node 22.21·24 부터). 설치·로그인 전에 찾아 넣는다 — 못 찾고 넘어가면 로그인 확인이 시간 초과로 끝난다(2026-11-17 사내 윈도우 PC 실측)
+  const px = findProxy();
+  if (px) {
+    const [maj, min] = process.versions.node.split(".").map(Number);
+    if (!(maj >= 24 || (maj === 22 && min >= 21))) {
+      console.log(`KITDEV-FAIL: 회사 프록시(${px.show})를 쓰는 PC 인데 이 Node(${process.versions.node})는 프록시를 따르지 못합니다 — node.ps1·node.sh 가 알려 준 Node 로 실행하세요`);
+      process.exit(1);
+    }
+    if (!process.env.NODE_USE_ENV_PROXY) console.log(`회사 프록시를 씁니다: ${px.show} (${px.from}에서 찾음)`);
+    if (process.allowedNodeEnvironmentFlags.has("--disable-warning")) flags.push("--disable-warning=UNDICI-EHPA");  // 'EnvHttpProxyAgent is experimental' 경고 줄
+    Object.assign(env, {NODE_USE_ENV_PROXY: "1", HTTPS_PROXY: px.url, HTTP_PROXY: px.url, https_proxy: px.url, http_proxy: px.url, NO_PROXY: px.bypass, no_proxy: px.bypass});
+  }
+  if (flags.length || env.NODE_EXTRA_CA_CERTS !== process.env.NODE_EXTRA_CA_CERTS || (px && !process.env.NODE_USE_ENV_PROXY)) {
     const r = spawnSync(process.execPath, [...flags, ...process.argv.slice(1)], {stdio: "inherit", env});
     process.exit(r.status ?? 1);
   }
@@ -71,6 +118,8 @@ if (!process.env.KITDEV_REEXEC) {
 }
 
 const say = m => console.log(m);
+// 연결 실패 줄에 어느 길로 갔는지 붙인다 — 프록시가 틀렸는지 키트가 죽었는지 가르게
+const via = () => process.env.HTTPS_PROXY ? ` (회사 프록시 ${process.env.HTTPS_PROXY.replace(/\/\/[^@/]*@/, "//***@")} 경유 — 프록시 주소가 맞는지, 그 프록시가 키트 주소를 허용하는지 확인)` : " (프록시 없이 바로 연결)";
 function die(msg, code = 1) { console.log(`KITDEV-FAIL: ${msg}`); process.exit(code); }
 
 function args(argv) {
@@ -138,7 +187,7 @@ async function fetchTool(pub, key, dest) {
     const r = await fetch(url);
     if (!r.ok) die(`${url} 을 받지 못했습니다(HTTP ${r.status}) — 관리자가 사내 Git 패키지 저장소에 올렸는지 확인하세요`);
     buf = Buffer.from(await r.arrayBuffer());
-  } catch (e) { die(`${url} 에 닿지 않습니다: ${e.cause?.code || e.message}`); }
+  } catch (e) { die(`${url} 에 닿지 않습니다: ${e.cause?.code || e.message}${via()}`); }
   if (createHash("sha256").update(buf).digest("hex") !== t.sha256) die(`받은 ${t.file} 의 sha256 이 tools.json 과 다릅니다`);
   if (t.unpack === false) {
     mkdirSync(dest, {recursive: true});
@@ -179,7 +228,7 @@ class Kit {
     for (let i = 0; i < 2; i++) {
       const headers = {Authorization: this.auth(), ...(body ? {"Content-Type": "application/json"} : {})};
       try { r = await fetch(url, {method, headers, body: body ? JSON.stringify(body) : undefined, redirect: "manual"}); }
-      catch (e) { die(`${this.pub} 에 닿지 않습니다: ${e.cause?.code || e.message}`); }
+      catch (e) { die(`${this.pub} 에 닿지 않습니다: ${e.cause?.code || e.message}${via()}`); }
       if (r.status !== 401) { if (!this.approved) { this.cred.approve(); this.approved = true; } break; }
       // 저장된 자격 증명이 낡았다(비밀번호 바뀜·지워진 토큰) — 지우고 GCM 로그인 창으로 한 번 다시 묻는다
       this.cred.reject();
@@ -275,7 +324,7 @@ async function login(a) {
       try {
         const res = await fetch(`${pub}/api/download`, {headers: {Authorization: `Basic ${Buffer.from(`${user}:${pw}`).toString("base64")}`}, redirect: "manual"});
         ok = res.status === 200;
-      } catch (e) { die(`${pub} 에 닿지 않습니다: ${e.cause?.code || e.message}`); }
+      } catch (e) { die(`${pub} 에 닿지 않습니다: ${e.cause?.code || e.message}${via()}`); }
     }
     say(ok ? `KITDEV-LOGIN: 로그인돼 있음 — 계정 ${user}` : "KITDEV-LOGIN: 저장된 로그인 없음 — 사용자에게 사내 Git 계정이 있는지 묻는다");
     return;
@@ -448,6 +497,23 @@ async function basicCheck(kit, c, sha, tree) {
 
 function venvPython() { return join(WS, ".venv", WIN ? "Scripts\\python.exe" : "bin/python"); }
 
+// 파이썬 찾기 — 윈도우는 py 런처가 없는 PC 가 있다(python.org 설치에서 런처를 끄거나 MSYS2 만 있는 PC, 2026-11-17 실측).
+// py → python → python3 순으로 보고, 3.11 이상이면서 가상환경이 윈도우 배치(.venv\Scripts)인 것만 쓴다 — MSYS2·Cygwin 파이썬은 .venv/bin 이라 시험기가 못 찾는다
+function findPython() {
+  const probe = "import sys,sysconfig;print(sys.version_info>=(3,11) and (sys.platform!='win32' or sysconfig.get_path('scripts','venv',{'base':'x'}).endswith('Scripts')))";
+  const tries = WIN ? [["py", ["-3"]], ["python", []], ["python3", []]] : [["python3", []], ["python", []]];
+  const seen = [];
+  for (const [cmd, pre] of tries) {
+    const r = spawnSync(cmd, [...pre, "-c", probe], {encoding: "utf8"});
+    if (r.error || r.status !== 0) continue;
+    if (r.stdout.trim() === "True") return [cmd, pre];
+    const w = spawnSync(cmd, [...pre, "-c", "import sys;print(sys.executable, sys.version.split()[0])"], {encoding: "utf8"});
+    seen.push((w.stdout || cmd).trim());
+  }
+  const why = seen.length ? `찾은 파이썬은 쓸 수 없습니다(3.11 미만이거나 MSYS2·Cygwin 판): ${seen.join(", ")}` : "파이썬을 찾지 못했습니다";
+  die(`${why} — ${WIN ? "python.org 의 윈도우용 Python 3.11 이상을 설치하세요(winget install -e --id Python.Python.3.13). 설치 후 새 터미널에서 다시" : "Python 3.11 이상을 설치하세요"}`);
+}
+
 // 가상환경은 pip 없이 만들고 pip 는 사내 Git 패키지 저장소의 단일 파일판(pip.pyz)으로 — Ubuntu 기본 Python 은 python3-venv(ensurepip)가
 // 없어 'python3 -m venv' 가 실패한다(2026-11-15 Azure 리눅스 PC 실측). 회사 pip 설정(사내 미러)은 그대로 따른다
 async function ensureVenv(c) {
@@ -455,7 +521,8 @@ async function ensureVenv(c) {
   const sig = createHash("sha256").update(["requirements.txt", "pyproject.toml"].map(f => existsSync(join(WS, f)) ? readFileSync(join(WS, f)) : "").join("\0")).digest("hex");
   if (existsSync(marker) && readFileSync(marker, "utf8") === sig) return;
   if (!existsSync(venvPython())) {
-    const r = WIN ? run("py", ["-m", "venv", "--without-pip", ".venv"], {stdio: "inherit"}) : run("python3", ["-m", "venv", "--without-pip", ".venv"], {stdio: "inherit"});
+    const [cmd, pre] = findPython();
+    const r = run(cmd, [...pre, "-m", "venv", "--without-pip", ".venv"], {stdio: "inherit"});
     if (r.status !== 0) die("가상환경(.venv)을 만들지 못했습니다 — 파이썬 3.11 이상이 필요합니다");
   }
   const t = readJson(join(dirname(fileURLToPath(import.meta.url)), "..", "tools.json"))?.tools?.["pip/any"];
@@ -557,15 +624,33 @@ async function deploy() {
 }
 
 async function mode(a) {
-  const c = conf();
-  const kit = new Kit(c.public);
+  // setup 전(로그인 직후)에도 묻는다 — 워크스페이스가 없으면 키트 주소는 login 과 같은 곳에서
+  const kit = new Kit(kitAddr(a));
   const want = a._[1];
   if (want && !["deep", "basic"].includes(want)) die("mode deep(심화 검사) 또는 mode basic(기본 검사)");
   const m = want ? {...await kit.must("GET", "/api/devkit/mode"), ...await kit.must("POST", "/api/devkit/mode", {mode: want, via: "plugin"})}
     : await kit.must("GET", "/api/devkit/mode");
-  say(`실행 모드: ${m.label}`);
-  say(m.mode === "deep" ? `  바깥 네트워크: ${(m.open || []).join(", ")} · 시험 전 심화 검사(CI 전체) 통과 필요`
-    : `  바깥 네트워크: ${(m.whitelist || []).join(", ") || "사내 서버만"} · 시험 전 기본 검사(바뀐 파일) 통과 필요`);
+  const open = (m.open || []).join(", ") || "관리자가 정한 범위";
+  const wl = (m.whitelist || []).join(", ") || "사내 서버만";
+  say(`KITDEV-MODE: ${m.mode}`);
+  say(`지금 실행 모드: ${m.mode === "deep" ? "심화 검사" : "기본 검사"}`);
+  if (want) return say(m.mode === "deep" ? `  바깥 네트워크: ${open} · 시험 전 심화 검사(CI 전체) 통과 필요`
+    : `  바깥 네트워크: ${wl} · 시험 전 기본 검사(바뀐 파일) 통과 필요`);
+  // 처음 고를 때 보여 줄 설명 — 값은 지금 관리자 정책에서 읽는다
+  say("");
+  say("goose 시험 샌드박스에서 MCP 가 바깥으로 나가는 범위와, 시험 전에 거칠 검사가 모드마다 다릅니다.");
+  say("(검증 안 된 코드 · 사내 데이터 · 바깥 통신 셋 중 둘까지만 허용합니다)");
+  say(`1) 심화 검사(deep) — 바깥 네트워크 열림: ${open}`);
+  say("   대가: 시험 전에 사내 CI 전체(빌드·도구 목록·테스트·저장소 전체 보안 검사)를 통과해야 합니다.");
+  say("         코드를 바꿀 때마다 커밋·push 후 CI 를 기다립니다(보통 수십 초~몇 분).");
+  say(`2) 기본 검사(basic) — 바깥 네트워크는 관리자 허용 목록만: ${wl}`);
+  say("   대가: 바깥 API 를 부르는 MCP 는 허용 목록에 없으면 시험에서 막힙니다(관리자에게 추가 요청).");
+  say("         대신 시험 전 검사는 바뀐 파일만 보는 기본 검사라 빠릅니다.");
+  if (!m.basic_allowed) say("   ※ 지금 관리자가 기본 검사 모드를 허용하지 않아 고를 수 없습니다.");
+  say("");
+  say("- 열리는 범위·허용 목록은 관리자가 정책에서 바꾸면 다음 시험부터 바로 바뀝니다.");
+  say("- 모드는 언제든 바꿀 수 있습니다(바꿀 때마다 감사 기록이 남습니다). 배포 요청의 중앙 검사는 모드와 상관없이 같습니다.");
+  say("- 바꾸는 법: Claude 에게 \"심화 검사로 바꿔줘\" / \"기본 검사로 바꿔줘\" 라고 하거나, 포털에서 바꿉니다.");
 }
 
 const STATUS = {queued: "검사 대기", running: "검사 중", done: "검사 끝"};

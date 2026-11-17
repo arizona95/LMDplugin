@@ -1,12 +1,12 @@
 ﻿# 사내 MCP 개발 키트 — kitdev.mjs 를 돌릴 Node 찾기(윈도우)
-# PC 에 Node 22.12 이상이 있으면 그것, 없으면 사내 Git 패키지 저장소(플러그인 tools.json)에서 휴대용 Node 를 받아 %USERPROFILE%\.mcp-kit\node 에 푼다(설치·관리자 권한 없음).
+# PC 에 Node 22.21 이상(회사 프록시를 따르는 NODE_USE_ENV_PROXY 가 있는 판)이 있으면 그것, 없으면 사내 Git 패키지 저장소(플러그인 tools.json)에서 휴대용 Node 를 받아 %USERPROFILE%\.mcp-kit\node 에 푼다(설치·관리자 권한 없음).
 # 마지막 줄: KITDEV-NODE: <node.exe 전체 경로> — 이 세션의 kitdev 실행은 그 경로로 한다.
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
 function Ok($exe) {
   if (-not $exe -or -not (Test-Path $exe)) { return $false }
-  & $exe -e "const [a,b]=process.versions.node.split('.').map(Number); process.exit(a>22||(a==22&&b>=12)?0:1)" 2>$null
+  & $exe -e "const [a,b]=process.versions.node.split('.').map(Number); process.exit(a>=24||(a==22&&b>=21)?0:1)" 2>$null
   return $LASTEXITCODE -eq 0
 }
 

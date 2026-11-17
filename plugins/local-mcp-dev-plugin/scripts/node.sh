@@ -1,8 +1,8 @@
 #!/bin/sh
-# 사내 MCP 개발 키트 — kitdev.mjs 를 돌릴 Node 찾기(리눅스). PC 에 Node 22.12 이상이 있으면 그것, 없으면 사내 키트에서 휴대용 Node 를
+# 사내 MCP 개발 키트 — kitdev.mjs 를 돌릴 Node 찾기(리눅스). PC 에 Node 22.21 이상(회사 프록시를 따르는 NODE_USE_ENV_PROXY 가 있는 판)이 있으면 그것, 없으면 사내 키트에서 휴대용 Node 를
 # (사내 Git 패키지 저장소 — 플러그인 tools.json) 받아 ~/.mcp-kit/node 에 푼다(설치·관리자 권한 없음). 마지막 줄: KITDEV-NODE: <node 전체 경로>
 set -eu
-ok() { [ -x "$1" ] && "$1" -e 'const [a,b]=process.versions.node.split(".").map(Number); process.exit(a>22||(a==22&&b>=12)?0:1)' 2>/dev/null; }
+ok() { [ -x "$1" ] && "$1" -e 'const [a,b]=process.versions.node.split(".").map(Number); process.exit(a>=24||(a==22&&b>=21)?0:1)' 2>/dev/null; }
 SYS=$(command -v node 2>/dev/null || true)
 if [ -n "$SYS" ] && ok "$SYS"; then echo "KITDEV-NODE: $SYS"; exit 0; fi
 DIR="$HOME/.mcp-kit/node"; EXE="$DIR/bin/node"
