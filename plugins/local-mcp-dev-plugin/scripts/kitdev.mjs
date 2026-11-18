@@ -16,7 +16,7 @@
 import { spawnSync, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, rmSync, openSync, closeSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, rmSync, openSync, closeSync, statSync, readdirSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir, homedir, release } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -67,6 +67,51 @@ function findProxy() {
 // --use-system-ca 가 없는 Node(22.15·23.8 전 — 2026-11-14 Azure 사용자 PC 22.12 실측)는 OS 신뢰 저장소(윈도우는 PEM 으로 내보내서)를 NODE_EXTRA_CA_CERTS 로
 if (!process.env.KITDEV_REEXEC) {
   const env = {...process.env, KITDEV_REEXEC: "1"};
+  // 인증서 경로 환경 변수를 쓸 수 없으면(없음·읽기 권한 없음·PEM 아님) — Node 는 경고만 내지만 이 뒤의 pip(.venv 설치)·Python MCP 는 HTTPS 를 아예 못 한다.
+  // OS 신뢰 저장소(회사 CA 포함)로 새로 만들어 그 파일을 가리키게 한다. 키트 폴더에 못 쓰면 임시 폴더, 명령이 실패하면 다음 자리, 다 안 되면 뺀다
+  const caProblem = (p, dirOk) => {
+    let st;
+    try { st = statSync(p); } catch (e) { return e.code === "ENOENT" || e.code === "ENOTDIR" ? "없는 파일" : `열 수 없음(${e.code})`; }
+    try {
+      if (st.isDirectory()) { if (!dirOk) return "파일이 아니라 폴더"; readdirSync(p); return null; }
+      if (!st.isFile()) return "보통 파일이 아님";
+      return readFileSync(p, "latin1").includes("-----BEGIN CERTIFICATE-----") ? null : "인증서(PEM)가 들어 있지 않은 파일";
+    } catch (e) { return `읽을 권한 없음(${e.code})`; }
+  };
+  const makeOsCa = () => {
+    for (const f of [join(homedir(), ".mcp-kit", "ca", "os-ca.pem"), join(tmpdir(), `kitdev-os-ca-${randomBytes(3).toString("hex")}.pem`)]) {
+      const tmp = `${f}.${process.pid}.tmp`;
+      try {
+        mkdirSync(dirname(f), {recursive: true});
+        if (WIN) {
+          const r = spawnSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", "$o=@(); foreach($s in 'Cert:\\LocalMachine\\Root','Cert:\\CurrentUser\\Root'){ foreach($c in Get-ChildItem $s){ " +
+            "$o += '-----BEGIN CERTIFICATE-----'; $o += [Convert]::ToBase64String($c.RawData,'InsertLineBreaks'); $o += '-----END CERTIFICATE-----' } }; " +
+            `[IO.File]::WriteAllLines('${tmp.replace(/'/g, "''")}', $o)`], {stdio: "ignore", windowsHide: true, timeout: 60000});
+          if (r.error || r.status !== 0) continue;
+        } else {
+          const sys = ["/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/cert.pem"].find(x => !caProblem(x));
+          if (!sys) return null;
+          writeFileSync(tmp, readFileSync(sys));
+        }
+        if (caProblem(tmp)) continue;
+        renameSync(tmp, f);
+        return f;
+      } catch { /* 다음 자리 */ } finally { try { rmSync(tmp, {force: true}); } catch {} }
+    }
+    return null;
+  };
+  const caGone = [];
+  let caMade;
+  for (const k of Object.keys(env)) {
+    const K = k.toUpperCase();
+    if (!["NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"].includes(K) || !env[k]) continue;
+    const why = caProblem(env[k], K === "REQUESTS_CA_BUNDLE");
+    if (!why) continue;
+    if (caMade === undefined) caMade = makeOsCa();
+    console.log(`인증서 환경 변수 ${k}=${env[k]} — ${why}. ${caMade ? `OS 인증서 저장소로 새로 만든 ${caMade} 로 바꿉니다` : "새로 만들지도 못해 이번 실행에서는 뺍니다"}`);
+    caGone.push(k);
+    if (caMade) env[k] = caMade; else delete env[k];
+  }
   const flags = [];
   if (process.allowedNodeEnvironmentFlags.has("--use-system-ca")) flags.push("--use-system-ca");
   else if (WIN) {
@@ -76,20 +121,21 @@ if (!process.env.KITDEV_REEXEC) {
       "$o += '-----BEGIN CERTIFICATE-----'; $o += [Convert]::ToBase64String($c.RawData,'InsertLineBreaks'); $o += '-----END CERTIFICATE-----' } }; " +
       `[IO.File]::WriteAllLines('${pem}', $o)`;
     if (spawnSync("powershell", ["-NoProfile", "-Command", ps], {stdio: "ignore"}).status === 0 && existsSync(pem)) {
-      const prev = process.env.NODE_EXTRA_CA_CERTS;
-      if (prev && existsSync(prev)) writeFileSync(pem, readFileSync(pem, "utf8") + "\n" + readFileSync(prev, "utf8"));
+      const prev = env.NODE_EXTRA_CA_CERTS;
+      if (prev && !caProblem(prev)) try { writeFileSync(pem, readFileSync(pem, "utf8") + "\n" + readFileSync(prev, "utf8")); } catch {}
       env.NODE_EXTRA_CA_CERTS = pem;
     }
   } else {
     // 리눅스: 회사 CA 는 시스템 묶음에 들어 있다 — Node 내장 목록만 보면 사내 서버를 못 믿는다(2026-11-15 Azure 리눅스 PC · 휴대용 Node 22.12 실측)
     const sys = ["/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt"].find(existsSync);
-    const prev = process.env.NODE_EXTRA_CA_CERTS;
+    const prev = env.NODE_EXTRA_CA_CERTS;
     if (sys && prev !== sys) {
-      if (prev && existsSync(prev)) {
+      env.NODE_EXTRA_CA_CERTS = sys;
+      if (prev && !caProblem(prev)) {
+        // 합친 파일을 못 쓰면(권한·디스크) 시스템 묶음만
         const pem = join(tmpdir(), `kitdev-os-ca-${process.getuid()}.pem`);
-        writeFileSync(pem, readFileSync(sys, "utf8") + "\n" + readFileSync(prev, "utf8"));
-        env.NODE_EXTRA_CA_CERTS = pem;
-      } else env.NODE_EXTRA_CA_CERTS = sys;
+        try { writeFileSync(pem, readFileSync(sys, "utf8") + "\n" + readFileSync(prev, "utf8")); env.NODE_EXTRA_CA_CERTS = pem; } catch {}
+      }
     }
   }
   // 회사 프록시 — 사내망 PC 는 바깥(키트 포함)이 프록시로만 나가는데, Node fetch 는 HTTPS_PROXY 를 NODE_USE_ENV_PROXY=1 일 때만 따른다
@@ -105,7 +151,7 @@ if (!process.env.KITDEV_REEXEC) {
     if (process.allowedNodeEnvironmentFlags.has("--disable-warning")) flags.push("--disable-warning=UNDICI-EHPA");  // 'EnvHttpProxyAgent is experimental' 경고 줄
     Object.assign(env, {NODE_USE_ENV_PROXY: "1", HTTPS_PROXY: px.url, HTTP_PROXY: px.url, https_proxy: px.url, http_proxy: px.url, NO_PROXY: px.bypass, no_proxy: px.bypass});
   }
-  if (flags.length || env.NODE_EXTRA_CA_CERTS !== process.env.NODE_EXTRA_CA_CERTS || (px && !process.env.NODE_USE_ENV_PROXY)) {
+  if (flags.length || caGone.length || env.NODE_EXTRA_CA_CERTS !== process.env.NODE_EXTRA_CA_CERTS || (px && !process.env.NODE_USE_ENV_PROXY)) {
     const r = spawnSync(process.execPath, [...flags, ...process.argv.slice(1)], {stdio: "inherit", env});
     process.exit(r.status ?? 1);
   }

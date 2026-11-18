@@ -8,7 +8,7 @@
     {
       "name": "local-mcp-dev-plugin",
       "source": "./plugins/local-mcp-dev-plugin",
-      "version": "0.9.14",
+      "version": "0.9.15",
       "description": "사내 MCP 개발 키트 — 환경 구성(mcp-setup) · CI 자동 검사 → goose 샌드박스 시험(mcp-run) · 배포 요청과 '배포됐어?' 확인(mcp-deploy). 키트 주소 https://localdevmcp.dowmain.org 를 품고 있다."
     }
   ]
