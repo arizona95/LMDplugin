@@ -16,7 +16,7 @@
 import { spawnSync, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, rmSync, openSync, closeSync, statSync, readdirSync, renameSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, rmSync, openSync, closeSync, statSync, readdirSync, renameSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir, homedir, release } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -412,10 +412,25 @@ async function login(a) {
   say(`KITDEV-LOGIN: 로그인 확인 — 계정 ${kit.cred.user} (다음부터는 묻지 않습니다)`);
 }
 
+// 윈도우 워크스페이스는 내 사용자 폴더 안에만 — 샌드박스(MXC) 컨테이너가 쓸 수 있는 곳이 거기뿐이다
+// (2026-11-19 사내 PC 윈도우 11 23H2 실측: C:\Users\<나>\Desktop 아래 읽기·쓰기 됨 · D:\ · D:\LocalMCPDev · D:\Personal Folder 는 쓰기를 열어 줘도
+//  컨테이너 안에서 '쓰기 방지된 미디어' · C:\Knox Drive 는 PC 에서도 폴더를 못 만듦 · D:\Secure Folder 는 폴더를 못 만듦)
+function placeCheck(name) {
+  const home = process.env.USERPROFILE || homedir();
+  const real = p => { try { return realpathSync(p); } catch { return p; } };
+  const norm = p => real(p).toLowerCase().replace(/[\\/]+$/, "");
+  const ws = norm(WS), h = norm(home);
+  if (ws.startsWith(h + "\\") && ws !== h) return;
+  const eg = join(home, "Desktop", "LocalMcpDev", name || "<MCP 이름>");
+  die(`이 폴더(${WS})는 MCP 워크스페이스로 쓸 수 없습니다 — 샌드박스 시험은 내 사용자 폴더(${home}) 안에서만 됩니다(D 드라이브·C:\\Knox Drive 는 샌드박스가 쓰지 못합니다). `
+    + `이 폴더를 만들고 그 폴더에서 Claude Code 를 다시 연 뒤 다시 실행하세요: ${eg}`);
+}
+
 async function setup(a) {
   if (!WIN && process.platform !== "linux") die("사내 MCP 개발 키트는 윈도우 11 과 리눅스 개발자 PC 를 지원합니다(MXC 샌드박스)");
   // 윈도우 10(빌드 22000 아래)은 MXC 가 폴더 권한(DACL)을 바꾸는 방식으로만 돈다 — 관리자 폴더(Program Files 의 Node·Python)를 못 바꿔 시험이 뜨지 않는다(2026-11-16 실측)
   if (WIN && Number(release().split(".")[2]) < 22000) die(`이 PC 는 윈도우 10(빌드 ${release()})입니다 — 사내 MCP 개발 키트의 샌드박스는 윈도우 11 과 리눅스에서만 돕니다. 윈도우 11 PC 에서 하세요`);
+  if (WIN) placeCheck(a.name);
   const pub = kitAddr(a);
   if (run("git", ["--version"]).status !== 0) die("git 이 없습니다 — Git for Windows 를 설치하세요");
   mkdirSync(KIT, {recursive: true});

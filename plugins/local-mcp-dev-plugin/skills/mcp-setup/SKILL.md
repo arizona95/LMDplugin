@@ -15,6 +15,10 @@ description: 사내 MCP 개발 환경 구성 — 지금 워크스페이스에 go
 - 개발자 PC 는 윈도우 11 과 리눅스를 지원한다. 리눅스는 관리자가 처음 한 번 샌드박스 준비(bubblewrap·slirp4netns·AppArmor 프로필)를 해 둬야 한다 — 없으면 setup 이 그 명령을 알려 주고 멈춘다. 그 줄을 사용자에게 그대로 전하고, 내가 sudo 로 대신 하지 않는다.
 
 ## 순서
+00. 워크스페이스 위치부터 본다(윈도우). 지금 폴더(Claude Code 를 연 폴더)가 내 사용자 폴더 안이어야 한다 — 권하는 곳: `%USERPROFILE%\Desktop\LocalMcpDev\<MCP 이름>` (예: `C:\Users\<나>\Desktop\LocalMcpDev\weather-mcp`).
+   - D 드라이브(`D:\…`, `D:\Personal Folder`, `D:\Secure Folder` 포함)·`C:\Knox Drive`·사용자 폴더 밖 C 드라이브(`C:\work` 등)는 안 된다. 샌드박스가 그곳에 쓰지 못해 시험이 멈춘다.
+   - 그런 폴더면 setup 을 돌리지 말고 사용자에게 알린다: "이 위치는 MCP 워크스페이스로 쓸 수 없습니다. `C:\Users\<나>\Desktop\LocalMcpDev\<이름>` 폴더를 만들고 그 폴더에서 Claude Code 를 다시 열어 주세요." 폴더는 내가 만들어 줘도 된다(세션 폴더는 사용자가 다시 열어야 한다).
+   - 놓쳐도 setup 이 같은 까닭으로 `KITDEV-FAIL:` 을 내고 멈춘다 — 그 줄의 권하는 경로를 그대로 전한다.
 0. 회사 프록시는 스크립트가 실행될 때마다 스스로 찾아 쓴다(환경 변수 → git `http.proxy` → 윈도우 인터넷 설정·PAC / GNOME 프록시 설정). 찾으면 첫 줄에 '회사 프록시를 씁니다: …'가 나온다 — 그 줄을 사용자에게 전한다. HTTPS_PROXY·NODE_USE_ENV_PROXY 를 손으로 넣거나 IPv4 우선 같은 우회를 시험하지 않는다. '닿지 않습니다 … 경유/바로 연결' 실패가 나오면 그 줄을 그대로 보여 주고, 프록시 주소를 사용자에게 한 번 묻는다(받은 주소는 `git config --global http.proxy <주소>` 로 넣으면 다음부터 스크립트가 찾는다).
 1. 사내 MCP 키트 주소를 확인한다.
    - 사내 마켓플레이스에서 받은 플러그인이면 주소가 이미 들어 있다(플러그인 폴더 `kit.json`). 이때는 `--kit` 없이 실행한다.
