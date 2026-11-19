@@ -174,6 +174,23 @@ const netErr = e => {
 // 연결 실패 줄에 어느 길로 갔는지 붙인다 — 프록시가 틀렸는지 키트가 죽었는지 가르게
 const via = () => process.env.HTTPS_PROXY ? ` (회사 프록시 ${process.env.HTTPS_PROXY.replace(/\/\/[^@/]*@/, "//***@")} 경유 — 프록시 주소가 맞는지, 그 프록시가 키트 주소를 허용하는지 확인)` : " (프록시 없이 바로 연결)";
 function die(msg, code = 1) { console.log(`KITDEV-FAIL: ${msg}`); process.exit(code); }
+// 회사 프록시가 이어 쓰던 연결을 응답 사이에 닫는다 — 다음 요청이 그 소켓에 실려 'other side closed'·'write ECONNABORTED' 로 끝난다
+// (2026-11-19 사내 윈도우 PC 실측: 같은 명령을 다시 치면 통과). 서버에 닿기 전에 끊긴 것이니 새 연결로 두 번까지 다시 보낸다.
+// 몸통이 있는 요청(POST)은 요청을 다 쓰기 전에 끊긴 경우(write 오류)만 — 서버가 받았을 수도 있는 요청을 두 번 내지 않게
+const DROPPED = /^(UND_ERR_SOCKET|UND_ERR_CLOSED|ECONNRESET|ECONNABORTED|EPIPE)$/;
+{
+  const raw = globalThis.fetch;
+  globalThis.fetch = async (url, opt = {}) => {
+    for (let i = 0; ; i++) {
+      try { return await raw(url, opt); }
+      catch (e) {
+        const c = e.cause || {}, idem = !opt.method || /^(GET|HEAD)$/i.test(opt.method);
+        if (i >= 2 || !DROPPED.test(c.code || "") || !(idem || c.syscall === "write")) throw e;
+        await new Promise(r => setTimeout(r, 500 * (i + 1)));
+      }
+    }
+  };
+}
 
 function args(argv) {
   const out = {_: []};
