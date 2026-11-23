@@ -24,6 +24,7 @@ import { fileURLToPath } from "node:url";
 
 const WIN = process.platform === "win32";
 const WS = process.cwd();
+const SLOW_MS = 5 * 60000;   // 프로그램이 느리게 뜨는 PC(사내 PC 실측 git 한 번 5초·GCM 14~18초)에서도 넉넉한 시간 제한 — 넘으면 무엇이 멈췄는지 알리고 끝낸다
 const KIT = join(WS, ".kit");
 const CONF = join(KIT, "workspace.json");
 const LAST = join(KIT, "last-ci.json");
@@ -51,7 +52,7 @@ function findProxy() {
     const ps = `$u=[Uri]'${target.replace(/'/g, "")}'; $p=[System.Net.WebRequest]::GetSystemWebProxy().GetProxy($u); ` +
       "if($p -and $p.Authority -ne $u.Authority){ $p.AbsoluteUri; " +
       "(Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings' -ErrorAction SilentlyContinue).ProxyOverride }";
-    const r = spawnSync("powershell", ["-NoProfile", "-Command", ps], {encoding: "utf8", timeout: 120000});
+    const r = spawnSync("powershell", ["-NoProfile", "-Command", ps], {encoding: "utf8", timeout: SLOW_MS});
     const [url, over = ""] = (r.stdout || "").split(/\r?\n/).map(x => x.trim());
     if (url) return mk(url.replace(/\/$/, ""), "윈도우 인터넷 설정", over.split(";").map(x => x.trim().replace(/^\*\./, ".")).filter(x => x && x !== "<local>"));
     return null;
@@ -73,7 +74,8 @@ if (!process.env.KITDEV_REEXEC) {
     const e = process.env, pk = Object.keys(e).find(k => k.toUpperCase() === "PATH") || "PATH";
     const codex = Object.keys(e).some(k => k.startsWith("CODEX_SANDBOX")) || /[\\/]\.sbx-denybin([;:]|$)/i.test(e[pk] || "") || /\/\/127\.0\.0\.1:9\/?$/.test(e.GIT_HTTP_PROXY || "");
     // 막힘은 EPERM·EACCES 로만 본다 — 프로세스 하나 뜨는 데 몇 초씩 걸리는 PC 가 있다(2026-11-23 사내 PC: node -v 3.8초 · git credential-manager 13.7초), 시간 초과는 샌드박스가 아니다
-    const p = spawnSync(process.execPath, ["-e", ""], {stdio: "pipe", timeout: 120000});
+    const p = spawnSync(process.execPath, ["-e", ""], {stdio: "pipe", timeout: SLOW_MS});
+    if (p.error?.code === "ETIMEDOUT") die(`Node 자식 프로세스가 ${SLOW_MS / 60000}분 안에 끝나지 않았습니다 — 이 PC 에서 프로그램이 뜨지 않습니다`);
     if (p.error && !["EPERM", "EACCES"].includes(p.error.code)) p.error = null;
     if (codex || p.error) {
       console.log(`KITDEV-SANDBOXED: 이 명령이 다른 샌드박스${codex ? "(Codex)" : ""} 안에서 실행됐습니다${p.error ? ` — 자식 프로세스를 띄우지 못함(${p.error.code})` : ""}. `
@@ -102,7 +104,7 @@ if (!process.env.KITDEV_REEXEC) {
         if (WIN) {
           const r = spawnSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", "$o=@(); foreach($s in 'Cert:\\LocalMachine\\Root','Cert:\\CurrentUser\\Root'){ foreach($c in Get-ChildItem $s){ " +
             "$o += '-----BEGIN CERTIFICATE-----'; $o += [Convert]::ToBase64String($c.RawData,'InsertLineBreaks'); $o += '-----END CERTIFICATE-----' } }; " +
-            `[IO.File]::WriteAllLines('${tmp.replace(/'/g, "''")}', $o)`], {stdio: "ignore", windowsHide: true, timeout: 60000});
+            `[IO.File]::WriteAllLines('${tmp.replace(/'/g, "''")}', $o)`], {stdio: "ignore", windowsHide: true, timeout: SLOW_MS});
           if (r.error || r.status !== 0) continue;
         } else {
           const sys = ["/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/cert.pem"].find(x => !caProblem(x));
@@ -384,19 +386,31 @@ function openBrowser(url) {
 
 // 환경 구성 첫 단계 — 계정이 있나부터. 없으면 가입 페이지, 있으면 Git Credential Manager 로그인 창
 // 이 PC 저장소에 있는 사내 Git 자격 증명(창을 띄우지 않는다)
+// 시간 제한 5분(SLOW_MS) — 프로그램 하나 뜨는 데 십수 초 걸리는 PC 가 있어(2026-11-23 사내 PC: credential fill 14.2초, 개발자 Claude 실측 git 7~9초 + GCM 18초)
+// 옛 20초 제한이 'spawnSync git ETIMEDOUT' 로 끊었다. 입력을 기다리며 멈출 길(GCM 창·터미널 질문·ASKPASS)은 아래 환경 변수로 다 끄고, 오래 걸리면 15초마다 경과를 낸다
 function storedCred(pub) {
   const u = new URL(pub);
-  const r = run("git", ["credential", "fill"], {input: `protocol=${u.protocol.replace(":", "")}\nhost=${u.host}\npath=git\n\n`,
-    // VS Code·Cursor 터미널의 GIT_ASKPASS 는 입력을 기다리며 멈춘다 — 확인할 때는 끈다
-    // 시간 제한은 넉넉히 — git 이 GCM 을 띄우는 데만 십수 초 걸리는 PC 가 있다(2026-11-23 사내 PC: credential fill 14.2초, 개발자 Claude 실측 git 7~9초 + GCM 18초 → 옛 20초 제한에 'spawnSync git ETIMEDOUT')
-    env: {...process.env, GCM_INTERACTIVE: "never", GCM_ALLOW_WINDOWSAUTH: "false", GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "", SSH_ASKPASS: ""}, timeout: 120000});
-  if (r.status !== 0) return {};
-  return {user: /^username=(.*)$/m.exec(r.stdout || "")?.[1], pw: /^password=(.*)$/m.exec(r.stdout || "")?.[1]};
+  return new Promise(res => {
+    const c = spawn("git", ["credential", "fill"], {cwd: WS, stdio: ["pipe", "pipe", "pipe"], windowsHide: true,
+      // VS Code·Cursor 터미널의 GIT_ASKPASS 는 입력을 기다리며 멈춘다 — 확인할 때는 끈다
+      env: {...process.env, GCM_INTERACTIVE: "never", GCM_ALLOW_WINDOWSAUTH: "false", GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "", SSH_ASKPASS: ""}});
+    let out = "";
+    const t0 = Date.now(), tick = setInterval(() => say(`사내 Git 저장 로그인 확인 중 — ${Math.round((Date.now() - t0) / 1000)}초째 (이 PC 는 git 이 뜨는 데 오래 걸립니다, 기다리면 됩니다)`), 15000);
+    c.stdout.on("data", d => out += d);
+    c.stderr.resume();
+    const kill = setTimeout(() => { c.kill(); clearInterval(tick); die(`git credential fill 이 ${SLOW_MS / 60000}분 안에 끝나지 않았습니다 — 이 PC 에서 git·Git Credential Manager 가 뜨지 않거나 멈췄습니다. 터미널에서 'git credential-manager --version' 이 끝나는지 확인하세요`); }, SLOW_MS);
+    c.on("error", e => { clearTimeout(kill); clearInterval(tick); die(`git 를 실행하지 못했습니다: ${e.message}`); });
+    c.on("close", code => {
+      clearTimeout(kill); clearInterval(tick);
+      res(code !== 0 ? {} : {user: /^username=(.*)$/m.exec(out)?.[1], pw: /^password=(.*)$/m.exec(out)?.[1]});
+    });
+    c.stdin.end(`protocol=${u.protocol.replace(":", "")}\nhost=${u.host}\npath=git\n\n`);
+  });
 }
 
 // 로그인은 됐는데 저장이 안 되면 명령마다 창이 다시 뜬다 — 리눅스 키링이 없거나 잠긴 PC(xrdp 세션 등, 2026-11-15 Azure 실측: GCM 'Object does not exist at path')
-function mustBeStored(pub) {
-  if (WIN || storedCred(pub).pw) return;
+async function mustBeStored(pub) {
+  if (WIN || (await storedCred(pub)).pw) return;
   die("사내 Git 로그인은 됐지만 이 PC 키링에 저장하지 못했습니다 — 데스크톱 로그인 키링(gnome-keyring 'login')이 없거나 잠겨 있습니다. " +
       "데스크톱 화면에서 로그인한 세션인지 확인하고, 원격 데스크톱(xrdp) 세션이면 관리자에게 xrdp 로그인에도 pam_gnome_keyring 을 켜 달라고 하세요(관리자 가이드 '개발자 PC (리눅스)')");
 }
@@ -412,7 +426,7 @@ async function login(a) {
   }
   if (a.check) {
     // 창을 띄우지 않고 저장된 것만 본다 — 없거나 키트가 거절하면 '없음'
-    const {user, pw} = storedCred(pub);
+    const {user, pw} = await storedCred(pub);
     let ok = false;
     if (user && pw) {
       try {
@@ -427,7 +441,7 @@ async function login(a) {
   const kit = new Kit(pub);
   await kit.must("GET", "/api/download");
   kit.cred.approve();
-  mustBeStored(pub);
+  await mustBeStored(pub);
   say(`KITDEV-LOGIN: 로그인 확인 — 계정 ${kit.cred.user} (다음부터는 묻지 않습니다)`);
 }
 
