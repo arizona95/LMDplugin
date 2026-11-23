@@ -51,7 +51,7 @@ function findProxy() {
     const ps = `$u=[Uri]'${target.replace(/'/g, "")}'; $p=[System.Net.WebRequest]::GetSystemWebProxy().GetProxy($u); ` +
       "if($p -and $p.Authority -ne $u.Authority){ $p.AbsoluteUri; " +
       "(Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings' -ErrorAction SilentlyContinue).ProxyOverride }";
-    const r = spawnSync("powershell", ["-NoProfile", "-Command", ps], {encoding: "utf8", timeout: 30000});
+    const r = spawnSync("powershell", ["-NoProfile", "-Command", ps], {encoding: "utf8", timeout: 120000});
     const [url, over = ""] = (r.stdout || "").split(/\r?\n/).map(x => x.trim());
     if (url) return mk(url.replace(/\/$/, ""), "윈도우 인터넷 설정", over.split(";").map(x => x.trim().replace(/^\*\./, ".")).filter(x => x && x !== "<local>"));
     return null;
@@ -72,7 +72,9 @@ if (!process.env.KITDEV_REEXEC) {
   {
     const e = process.env, pk = Object.keys(e).find(k => k.toUpperCase() === "PATH") || "PATH";
     const codex = Object.keys(e).some(k => k.startsWith("CODEX_SANDBOX")) || /[\\/]\.sbx-denybin([;:]|$)/i.test(e[pk] || "") || /\/\/127\.0\.0\.1:9\/?$/.test(e.GIT_HTTP_PROXY || "");
-    const p = spawnSync(process.execPath, ["-e", ""], {stdio: "pipe", timeout: 15000});
+    // 막힘은 EPERM·EACCES 로만 본다 — 프로세스 하나 뜨는 데 몇 초씩 걸리는 PC 가 있다(2026-11-23 사내 PC: node -v 3.8초 · git credential-manager 13.7초), 시간 초과는 샌드박스가 아니다
+    const p = spawnSync(process.execPath, ["-e", ""], {stdio: "pipe", timeout: 120000});
+    if (p.error && !["EPERM", "EACCES"].includes(p.error.code)) p.error = null;
     if (codex || p.error) {
       console.log(`KITDEV-SANDBOXED: 이 명령이 다른 샌드박스${codex ? "(Codex)" : ""} 안에서 실행됐습니다${p.error ? ` — 자식 프로세스를 띄우지 못함(${p.error.code})` : ""}. `
         + "키트는 시험용 샌드박스를 직접 띄우고 사내 키트에 연결해야 해서 그 안에서는 설치·시험을 할 수 없습니다. 같은 명령을 샌드박스 밖에서 다시 실행하세요 "
@@ -386,7 +388,8 @@ function storedCred(pub) {
   const u = new URL(pub);
   const r = run("git", ["credential", "fill"], {input: `protocol=${u.protocol.replace(":", "")}\nhost=${u.host}\npath=git\n\n`,
     // VS Code·Cursor 터미널의 GIT_ASKPASS 는 입력을 기다리며 멈춘다 — 확인할 때는 끈다
-    env: {...process.env, GCM_INTERACTIVE: "never", GCM_ALLOW_WINDOWSAUTH: "false", GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "", SSH_ASKPASS: ""}, timeout: 20000});
+    // 시간 제한은 넉넉히 — git 이 GCM 을 띄우는 데만 십수 초 걸리는 PC 가 있다(2026-11-23 사내 PC: credential fill 14.2초, 개발자 Claude 실측 git 7~9초 + GCM 18초 → 옛 20초 제한에 'spawnSync git ETIMEDOUT')
+    env: {...process.env, GCM_INTERACTIVE: "never", GCM_ALLOW_WINDOWSAUTH: "false", GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "", SSH_ASKPASS: ""}, timeout: 120000});
   if (r.status !== 0) return {};
   return {user: /^username=(.*)$/m.exec(r.stdout || "")?.[1], pw: /^password=(.*)$/m.exec(r.stdout || "")?.[1]};
 }
