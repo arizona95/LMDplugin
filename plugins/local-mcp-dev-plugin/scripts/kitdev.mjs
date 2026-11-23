@@ -3,6 +3,7 @@
 //   (Node 가 없으면 먼저 scripts/node.ps1 · node.sh — 사내 Git 패키지 저장소(tools.json)의 휴대용 Node 를 받아 그 경로를 알려 준다)
 //   login  [--check 1 | --signup 1] [--kit <주소>]          사내 Git 로그인 — check: 저장된 로그인 있나(창 없이) · signup: 가입 페이지를 브라우저로
 //   setup  --kit <주소> [--name <MCP 이름>] [--desc <설명>]   워크스페이스에 goose·샌드박스·mcp-test 설치 + 사내 Git 저장소 연결
+//   check                                                    환경 점검 — 샌드박스(정책대로)에서 MCP 툴 목록·LLM 게이트웨이가 되는지(setup 끝에도 돈다)
 //   ci     [-m <커밋 메시지>]                                  commit·push → 사내 CI 결과를 기다려 통과/실패(실패 줄만) 보고
 //   test   -t <질문> [--with-extension <명령>]                 CI 를 통과한 지금 코드만 goose(MXC 샌드박스)에서 시험
 //   wait                                                     뒤에서 도는 시험의 남은 출력·끝을 기다림
@@ -66,6 +67,19 @@ function findProxy() {
 // 사내 CA 는 회사 PC 의 OS 인증서 저장소에 있다 — Node 가 그것을 쓰게 한 번 다시 띄운다.
 // --use-system-ca 가 없는 Node(22.15·23.8 전 — 2026-11-14 Azure 사용자 PC 22.12 실측)는 OS 신뢰 저장소(윈도우는 PEM 으로 내보내서)를 NODE_EXTRA_CA_CERTS 로
 if (!process.env.KITDEV_REEXEC) {
+  // 다른 에이전트의 샌드박스(Codex 등) 안에서 불렸으면 멈춘다 — 키트는 goose·자기 샌드박스(MXC·srt)를 띄우고 사내 키트에 닿아야 하는데
+  // Codex 윈도우 샌드박스는 Node 의 자식 프로세스(파이프)를 EPERM 으로 막고 바깥 네트워크도 막는다(2026-11-23 Azure admin-window-pc · Codex 0.171.0 :workspace 실측)
+  {
+    const e = process.env, pk = Object.keys(e).find(k => k.toUpperCase() === "PATH") || "PATH";
+    const codex = Object.keys(e).some(k => k.startsWith("CODEX_SANDBOX")) || /[\\/]\.sbx-denybin([;:]|$)/i.test(e[pk] || "") || /\/\/127\.0\.0\.1:9\/?$/.test(e.GIT_HTTP_PROXY || "");
+    const p = spawnSync(process.execPath, ["-e", ""], {stdio: "pipe", timeout: 15000});
+    if (codex || p.error) {
+      console.log(`KITDEV-SANDBOXED: 이 명령이 다른 샌드박스${codex ? "(Codex)" : ""} 안에서 실행됐습니다${p.error ? ` — 자식 프로세스를 띄우지 못함(${p.error.code})` : ""}. `
+        + "키트는 시험용 샌드박스를 직접 띄우고 사내 키트에 연결해야 해서 그 안에서는 설치·시험을 할 수 없습니다. 같은 명령을 샌드박스 밖에서 다시 실행하세요 "
+        + "(Codex: 이 명령에 샌드박스 밖 실행 승인을 요청 — sandbox_permissions=require_escalated).");
+      process.exit(3);
+    }
+  }
   const env = {...process.env, KITDEV_REEXEC: "1"};
   // 인증서 경로 환경 변수를 쓸 수 없으면(없음·읽기 권한 없음·PEM 아님) — Node 는 경고만 내지만 이 뒤의 pip(.venv 설치)·Python MCP 는 HTTPS 를 아예 못 한다.
   // OS 신뢰 저장소(회사 CA 포함)로 새로 만들어 그 파일을 가리키게 한다. 키트 폴더에 못 쓰면 임시 폴더, 명령이 실패하면 다음 자리, 다 안 되면 뺀다
@@ -223,8 +237,10 @@ const conf = () => readJson(CONF) || die("이 워크스페이스는 아직 준�
 
 // Git Credential Manager 로그인 창을 띄울 수 있게 — GIT_TERMINAL_PROMPT=0 이면 GCM 이 창까지 막는다
 // ("Cannot prompt because user interactivity has been disabled" — 2026-11-14 Azure 사용자 PC 실측, Claude 의 Bash 에서 실행될 때)
+// 키트(Gitea)는 Windows 통합 인증을 쓰지 않는다 — 켜 두면 GCM 이 저장된 로그인이 없을 때 키트 주소로 HEAD 를 보내 확인부터 하는데,
+// 회사 프록시가 그 요청에 답하지 않으면 20초 넘게 멈춘다(2026-11-23 Azure admin-window-pc 재현: 21.6초 → 끄면 2.6초 · 사내 임직원 PC login --check 'spawnSync git ETIMEDOUT')
 function credEnv() {
-  const env = {...process.env, GCM_INTERACTIVE: "always"};
+  const env = {...process.env, GCM_INTERACTIVE: "always", GCM_ALLOW_WINDOWSAUTH: "false"};
   delete env.GIT_TERMINAL_PROMPT;
   return env;
 }
@@ -370,7 +386,7 @@ function storedCred(pub) {
   const u = new URL(pub);
   const r = run("git", ["credential", "fill"], {input: `protocol=${u.protocol.replace(":", "")}\nhost=${u.host}\npath=git\n\n`,
     // VS Code·Cursor 터미널의 GIT_ASKPASS 는 입력을 기다리며 멈춘다 — 확인할 때는 끈다
-    env: {...process.env, GCM_INTERACTIVE: "never", GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "", SSH_ASKPASS: ""}, timeout: 20000});
+    env: {...process.env, GCM_INTERACTIVE: "never", GCM_ALLOW_WINDOWSAUTH: "false", GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "", SSH_ASKPASS: ""}, timeout: 20000});
   if (r.status !== 0) return {};
   return {user: /^username=(.*)$/m.exec(r.stdout || "")?.[1], pw: /^password=(.*)$/m.exec(r.stdout || "")?.[1]};
 }
@@ -479,8 +495,20 @@ async function setup(a) {
     mustGit("config", "user.email", `${kit.cred.user}@users.noreply`);
   }
   writeFileSync(CONF, JSON.stringify({public: pub, repo}, null, 1));
-  say(`준비 끝 — 저장소 ${pub}/git/${repo} · 시험 도구 ${KIT}`);
-  // 샌드박스는 MXC — 윈도우는 처음 한 번 준비가 없고, 리눅스는 관리자 준비(slirp4netns·AppArmor)가 없으면 install.sh 가 멈추고 알려 준다
+  say(`설치 끝 — 저장소 ${pub}/git/${repo} · 시험 도구 ${KIT}`);
+  // 샌드박스는 회사 정책 순서대로 — 리눅스 MXC 관리자 준비(slirp4netns·iptables·AppArmor)가 없으면 install.sh 는 알리고 마치며, 환경 점검이 다음 순서로 내려간다
+
+  // 4) 환경 점검 — 설치만으로 '준비됐다'고 하지 않는다. 이 PC 에서 샌드박스(정책대로)를 띄워 MCP 툴 목록을 읽고 LLM 게이트웨이에 닿는지까지 본다
+  envCheck();
+}
+
+function envCheck() {
+  say("환경 점검 — 이 PC 에서 시험 환경(샌드박스·MCP 툴 목록·LLM 게이트웨이)이 실제로 되는지 봅니다");
+  const r = spawnSync(process.execPath, [join(KIT, "client", "mcp-test.mjs"), "check"], {cwd: WS, encoding: "utf8", env: {...process.env, KIT_DIR: KIT}, timeout: 600000});
+  const out = `${r.stdout || ""}${r.stderr || ""}`;
+  for (const l of out.split(/\r?\n/)) if (l.trim()) say(l.replace(/^mcp-test: /, "  "));
+  if (!/KIT-ENV-OK/.test(out)) die(`환경 점검을 통과하지 못해 개발 환경이 아직 준비되지 않았습니다 — ${/KIT-ENV-FAIL: (.+)/.exec(out)?.[1] || r.error?.message || `점검 종료 ${r.status}`}`);
+  console.log("KITDEV-READY: 개발 환경 점검 통과");
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -662,7 +690,10 @@ async function test(a) {
   rmSync(RUN, {recursive: true, force: true});
   mkdirSync(RUN, {recursive: true});
   writeFileSync(join(RUN, "run.json"), JSON.stringify({argv}));
-  spawn(process.execPath, [SELF, "_bg"], {cwd: WS, detached: true, stdio: "ignore", windowsHide: true, env: {...process.env, KIT_DIR: KIT}}).unref();
+  const b = spawn(process.execPath, [SELF, "_bg"], {cwd: WS, detached: true, stdio: "ignore", windowsHide: true, env: {...process.env, KIT_DIR: KIT}});
+  b.on("error", e => die(`시험을 뒤에서 띄우지 못했습니다: ${e.message}`));
+  if (b.pid) writeFileSync(join(RUN, "bg.pid"), String(b.pid));
+  b.unref();
   await follow();
 }
 
@@ -673,10 +704,14 @@ const SELF = fileURLToPath(import.meta.url);
 function bg() {
   const {argv} = readJson(join(RUN, "run.json"));
   const fd = openSync(join(RUN, "log.txt"), "a");
+  const end = code => { try { closeSync(fd); } catch {} writeFileSync(join(RUN, "exit.json"), JSON.stringify({code})); process.exit(0); };
   const child = spawn(process.execPath, argv, {cwd: WS, stdio: ["ignore", fd, fd], windowsHide: true, env: process.env});
-  child.on("exit", code => { closeSync(fd); writeFileSync(join(RUN, "exit.json"), JSON.stringify({code: code ?? 1})); process.exit(0); });
+  // 못 띄우면(다른 샌드박스 안 EPERM 등) exit 가 오지 않는다 — 까닭을 남기고 끝내야 follow 가 20분을 헛기다리지 않는다
+  child.on("error", e => { appendFileSync(join(RUN, "log.txt"), `KITDEV-FAIL: mcp-test 를 띄우지 못했습니다: ${e.message}\n`); end(1); });
+  child.on("exit", code => end(code ?? 1));
 }
 
+const alive = pid => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === "EPERM"; } };
 // 새 출력을 보이고, 끝나면 멈춘다
 async function follow() {
   if (!existsSync(join(RUN, "run.json"))) die("뒤에서 도는 시험이 없습니다 — 먼저 test");
@@ -692,6 +727,9 @@ async function follow() {
     }
     const done = readJson(join(RUN, "exit.json"));
     if (done) { const c = readJson(CONF); if (c) await budgetLine(new Kit(c.public)); process.exit(done.code); }
+    // 뒤 프로세스가 결과 없이 사라졌으면(강제 종료·재부팅) 기다리지 않는다
+    const pf = join(RUN, "bg.pid"), pid = existsSync(pf) ? Number(readFileSync(pf, "utf8")) : 0;
+    if (pid && !alive(pid) && !readJson(join(RUN, "exit.json"))) die(`뒤에서 돌던 시험(프로세스 ${pid})이 결과 없이 끝났습니다 — 출력: ${join(RUN, "log.txt")}. 다시 test`);
     if (Date.now() - t0 > 20 * 60e3) { say("시험이 아직 진행 중입니다 — 이어서 보려면 wait"); process.exit(0); }
     await sleep(500);
   }
@@ -874,5 +912,11 @@ async function secret(a) {
 }
 
 const a = args(process.argv.slice(2));
-const CMDS = {login, secret, setup, ci, test, wait: follow, deploy, status, mode, _bg: bg};
+async function check() {
+  const c = conf();
+  await ensureKit(new Kit(c.public));
+  envCheck();
+}
+
+const CMDS = {login, secret, setup, check, ci, test, wait: follow, deploy, status, mode, _bg: bg};
 (CMDS[a._[0]] || (() => die(`사용: kitdev ${Object.keys(CMDS).join("|")}`, 2)))(a);
