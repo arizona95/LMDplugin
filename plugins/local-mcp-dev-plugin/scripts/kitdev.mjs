@@ -525,11 +525,10 @@ function envCheck() {
   const out = `${r.stdout || ""}${r.stderr || ""}`;
   for (const l of out.split(/\r?\n/)) if (l.trim()) say(l.replace(/^mcp-test: /, "  "));
   if (!/KIT-ENV-OK/.test(out)) die(`환경 점검을 통과하지 못해 개발 환경이 아직 준비되지 않았습니다 — ${/KIT-ENV-FAIL: (.+)/.exec(out)?.[1] || r.error?.message || `점검 종료 ${r.status}`}`);
-  // 어느 환경에서 시험이 도는지 꼬리표로 — 점검 출력의 '샌드박스 <MXC|srt|없음>' 줄(키트 mcp-test check)에서 읽는다
-  const kind = /^(?:mcp-test: )?샌드박스 (MXC|srt|없음)(?= \(앞 순서 안 됨|\s*$)/m.exec(out)?.[1];
-  const tag = {MXC: "[MXC]", srt: "[SRT]", 없음: "[NO_SANDBOX]"}[kind] || "[샌드박스 ?]";
-  const where = {MXC: "MXC 샌드박스 안에서", srt: "srt 샌드박스 안에서", 없음: "샌드박스 없이(작업 폴더 밖 파일·네트워크 제한 없음)"}[kind] || "어느 샌드박스인지 점검 출력에서 찾지 못한 채로";
-  console.log(`KITDEV-READY: ${tag} 개발 환경 점검 통과 — 이 PC 의 시험(goose)은 ${where} 돕니다`);
+  // 어느 환경에서 시험이 도는지 꼬리표로 — 점검 출력의 '샌드박스 <MXC|srt>' 줄(키트 mcp-test check)에서 읽는다
+  const kind = /^(?:mcp-test: )?샌드박스 (MXC|srt)(?= \(앞 순서 안 됨|\s*$)/m.exec(out)?.[1];
+  if (!kind) die("환경 점검은 통과했다고 하는데 어느 샌드박스인지 점검 출력에서 찾지 못했습니다 — 샌드박스 없이는 준비됐다고 하지 않습니다");
+  console.log(`KITDEV-READY: [${kind.toUpperCase()}] 개발 환경 점검 통과 — 이 PC 의 시험(goose)은 ${kind} 샌드박스 안에서 돕니다`);
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
