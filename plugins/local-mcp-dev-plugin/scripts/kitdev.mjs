@@ -24,7 +24,7 @@ import { fileURLToPath } from "node:url";
 
 const WIN = process.platform === "win32";
 const WS = process.cwd();
-const SLOW_MS = 5 * 60000;   // 프로그램이 느리게 뜨는 PC(사내 PC 실측 git 한 번 5초·GCM 14~18초)에서도 넉넉한 시간 제한 — 넘으면 무엇이 멈췄는지 알리고 끝낸다
+const SLOW_MS = 20 * 60000;  // 프로그램이 느리게 뜨는 PC(사내 PC 실측 git 한 번 5초·GCM 14~18초) — 끝날 때까지 기다리고, 20분 넘게(출력을 보는 곳은 출력이 20분 동안 안 바뀔 때) 멈춰 있을 때만 무엇이 멈췄는지 알리고 끝낸다
 const KIT = join(WS, ".kit");
 const CONF = join(KIT, "workspace.json");
 const LAST = join(KIT, "last-ci.json");
@@ -386,7 +386,7 @@ function openBrowser(url) {
 
 // 환경 구성 첫 단계 — 계정이 있나부터. 없으면 가입 페이지, 있으면 Git Credential Manager 로그인 창
 // 이 PC 저장소에 있는 사내 Git 자격 증명(창을 띄우지 않는다)
-// 시간 제한 5분(SLOW_MS) — 프로그램 하나 뜨는 데 십수 초 걸리는 PC 가 있어(2026-11-23 사내 PC: credential fill 14.2초, 개발자 Claude 실측 git 7~9초 + GCM 18초)
+// 시간 제한 20분(SLOW_MS) — 프로그램 하나 뜨는 데 십수 초 걸리는 PC 가 있어(2026-11-23 사내 PC: credential fill 14.2초, 개발자 Claude 실측 git 7~9초 + GCM 18초)
 // 옛 20초 제한이 'spawnSync git ETIMEDOUT' 로 끊었다. 입력을 기다리며 멈출 길(GCM 창·터미널 질문·ASKPASS)은 아래 환경 변수로 다 끄고, 오래 걸리면 15초마다 경과를 낸다
 function storedCred(pub) {
   const u = new URL(pub);
@@ -516,15 +516,27 @@ async function setup(a) {
   // 샌드박스는 회사 정책 순서대로 — 리눅스 MXC 관리자 준비(slirp4netns·iptables·AppArmor)가 없으면 install.sh 는 알리고 마치며, 환경 점검이 다음 순서로 내려간다
 
   // 4) 환경 점검 — 설치만으로 '준비됐다'고 하지 않는다. 이 PC 에서 샌드박스(정책대로)를 띄워 MCP 툴 목록을 읽고 LLM 게이트웨이에 닿는지까지 본다
-  envCheck();
+  await envCheck();
 }
 
-function envCheck() {
+async function envCheck() {
   say("환경 점검 — 이 PC 에서 시험 환경(샌드박스·MCP 툴 목록·LLM 게이트웨이)이 실제로 되는지 봅니다");
-  const r = spawnSync(process.execPath, [join(KIT, "client", "mcp-test.mjs"), "check"], {cwd: WS, encoding: "utf8", env: {...process.env, KIT_DIR: KIT}, timeout: 600000});
-  const out = `${r.stdout || ""}${r.stderr || ""}`;
-  for (const l of out.split(/\r?\n/)) if (l.trim()) say(l.replace(/^mcp-test: /, "  "));
-  if (!/KIT-ENV-OK/.test(out)) die(`환경 점검을 통과하지 못해 개발 환경이 아직 준비되지 않았습니다 — ${/KIT-ENV-FAIL: (.+)/.exec(out)?.[1] || r.error?.message || `점검 종료 ${r.status}`}`);
+  // 점검이 끝날 때까지 기다린다 — 줄이 나오는 대로 보여 주고, 출력이 20분(SLOW_MS) 동안 하나도 안 바뀔 때만 멈춘 것으로 보고 끝낸다(출력이 나오면 다시 센다)
+  const c = spawn(process.execPath, [join(KIT, "client", "mcp-test.mjs"), "check"], {cwd: WS, env: {...process.env, KIT_DIR: KIT}, stdio: ["ignore", "pipe", "pipe"], windowsHide: true});
+  let out = "", part = "", last = Date.now(), idle = false;
+  const seen = d => {
+    last = Date.now(); out += d; part += d;
+    const lines = part.split(/\r?\n/); part = lines.pop();
+    for (const l of lines) if (l.trim()) say(l.replace(/^mcp-test: /, "  "));
+  };
+  c.stdout.on("data", seen);
+  c.stderr.on("data", seen);
+  const watch = setInterval(() => { if (Date.now() - last >= SLOW_MS) { idle = true; c.kill(); } }, 15000);
+  const code = await new Promise(res => { c.on("exit", res); c.on("error", e => { out += e.message; res("error"); }); });
+  clearInterval(watch);
+  if (part.trim()) say(part.replace(/^mcp-test: /, "  "));
+  if (idle) die(`환경 점검 출력이 ${SLOW_MS / 60000}분 동안 바뀌지 않아 멈춘 것으로 보고 끝냈습니다 — 마지막 줄: ${out.trim().split(/\r?\n/).pop()}`);
+  if (!/KIT-ENV-OK/.test(out)) die(`환경 점검을 통과하지 못해 개발 환경이 아직 준비되지 않았습니다 — ${/KIT-ENV-FAIL: (.+)/.exec(out)?.[1] || `점검 종료 ${code}`}`);
   // 어느 환경에서 시험이 도는지 꼬리표로 — 점검 출력의 '샌드박스 <MXC|srt>' 줄(키트 mcp-test check)에서 읽는다
   const kind = /^(?:mcp-test: )?샌드박스 (MXC|srt)(?= \(앞 순서 안 됨|\s*$)/m.exec(out)?.[1];
   if (!kind) die("환경 점검은 통과했다고 하는데 어느 샌드박스인지 점검 출력에서 찾지 못했습니다 — 샌드박스 없이는 준비됐다고 하지 않습니다");
@@ -935,7 +947,7 @@ const a = args(process.argv.slice(2));
 async function check() {
   const c = conf();
   await ensureKit(new Kit(c.public));
-  envCheck();
+  await envCheck();
 }
 
 const CMDS = {login, secret, setup, check, ci, test, wait: follow, deploy, status, mode, _bg: bg};
