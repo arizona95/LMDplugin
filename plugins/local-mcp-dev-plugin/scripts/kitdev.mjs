@@ -182,6 +182,13 @@ if (!process.env.KITDEV_REEXEC) {
 }
 
 const say = m => console.log(m);
+// 진행 단계 — 'KITDEV-STEP n/N (p%) 이름' 줄. mcp-setup 이 이 이름들로 할 일 목록을 만들어 줄이 나올 때마다 하나씩 체크한다(환경 세팅이 오래 걸려도 어디까지 왔는지 보이게)
+const STEPS = {
+  setup: ["사내 키트 로그인 확인", "goose·샌드박스 받기", "사내 Git 저장소 연결", "샌드박스 점검(MXC → srt · MCP 툴 목록 · LLM)", "데모 시험"],
+  check: ["goose·샌드박스 받기", "샌드박스 점검(MXC → srt · MCP 툴 목록 · LLM)", "데모 시험"],
+};
+let steps = [];
+const step = name => { const i = steps.indexOf(name); if (i >= 0) say(`KITDEV-STEP ${i + 1}/${steps.length} (${Math.round(i * 100 / steps.length)}%) ${name}`); };
 // 연결 실패의 실제 까닭 — fetch 는 'fetch failed' 만 주고 까닭은 cause 에 있다. 인증서 확인 실패(OpenSSL X509 코드)는 네트워크 문제가 아니라고 따로 말한다
 const TLS_CODES = /^(UNSPECIFIED|UNABLE_TO_|SELF_SIGNED|DEPTH_ZERO|CERT_|ERR_TLS|INVALID_CA|INVALID_PURPOSE|HOSTNAME_MISMATCH|ERR_SSL)/;
 const netErr = e => {
@@ -353,7 +360,7 @@ async function ensureKit(kit, force) {
   const prev = existsSync(script) ? readFileSync(script, "utf8").replace(/^\uFEFF/, "") : null;
   if (!existsSync(join(KIT, "kit.json")) || force || prev !== body) {
     if (prev !== null && prev !== body) say("사내 키트가 바뀌어 goose 시험 환경을 새로 받습니다");
-    say("goose·샌드박스를 받습니다(약 100 MB) — 네트워크 경로에 따라 몇 초에서 수십 분까지 걸립니다. 1분마다 '몇 % 완료되었습니다' 줄이 나오면 받는 중이니 끊지 말고 기다리세요");
+    say("goose·샌드박스를 받습니다(약 100 MB) — 네트워크 경로에 따라 몇 초에서 수십 분까지 걸립니다. 20초마다 '몇 % 완료되었습니다' 줄이 나오면 받는 중이니 끊지 말고 기다리세요");
     const code = (await kit.must("POST", "/api/dlcode")).code;
     const env = {...process.env, KIT_TOKEN: code, KIT_DIR: KIT};
     let r;
@@ -467,6 +474,7 @@ async function setup(a) {
   const pub = kitAddr(a);
   if (run("git", ["--version"]).status !== 0) die("git 이 없습니다 — Git for Windows 를 설치하세요");
   mkdirSync(KIT, {recursive: true});
+  step("사내 키트 로그인 확인");
   await ensureGcm(pub);
   const kit = new Kit(pub);
   const me = await kit.must("GET", "/api/download");
@@ -474,10 +482,11 @@ async function setup(a) {
   say(`사내 키트 ${pub} 로그인 확인 · goose ${me.version}`);
 
   // 1) 워크스페이스에 goose · 샌드박스 · mcp-test (사내 설치 스크립트를 KIT_DIR 로)
+  step("goose·샌드박스 받기");
   await ensureKit(kit, a.reinstall);
-  srtAdminFirst();
 
   // 2) 사내 Git 저장소 연결
+  step("사내 Git 저장소 연결");
   let repo = readJson(CONF)?.repo;
   const origin = git("remote", "get-url", "origin");
   if (origin.ok && origin.out.startsWith(`${pub}/git/`)) {
@@ -520,26 +529,31 @@ async function setup(a) {
   await envCheck();
 }
 
-// 윈도우 srt 는 처음 한 번 관리자 준비(전용 계정 srt-sandbox·WFP)가 있어야 돈다 — 회사 정책에 srt 가 있는데(설치 스크립트가 srt 를 받았는데) 준비가 안 돼 있으면
-// 개발자 세팅(저장소 연결·환경 점검)으로 가기 전에 멈추고 관리자 명령을 알린다. 사용자가 관리자 PowerShell 에서 실행한 뒤 setup 을 다시 부르면 이어서 간다
-function srtAdminFirst() {
+// 윈도우 srt 는 처음 한 번 관리자 준비(전용 계정 srt-sandbox·WFP)가 있어야 돈다 — 점검이 실패했는데(정책 순서 MXC → srt 에서 MXC 가 안 됨) srt 준비가 안 돼 있으면
+// 관리자 명령을 알리고 멈춘다. 사용자가 관리자 PowerShell 에서 실행한 뒤 'check --sandbox srt' 로 srt 만 다시 점검한다(안 된 MXC 를 또 기다리지 않게)
+function srtAdminNeeded(mxcWhy) {
   if (!WIN) return;
   const cli = readJson(join(KIT, "kit.json"))?.srt_cli;
   if (!cli || !existsSync(cli)) return;
-  if (spawnSync("net", ["user", "srt-sandbox"], {stdio: "ignore", windowsHide: true, timeout: SLOW_MS}).status === 0) return say("srt 샌드박스 관리자 준비 O (계정 srt-sandbox 있음)");
-  console.log(`KITDEV-ADMIN: srt 샌드박스는 이 PC 에서 처음 한 번 관리자 준비가 필요합니다 — 관리자 PowerShell 에서 아래 명령을 실행한 뒤 다시 setup 하세요\n& "${process.execPath}" "${cli}" windows-install --proxy-port-range 60080-60143`);   // Node 는 휴대용일 수 있어 PATH 에 없다 — 이 스크립트를 돌린 node 의 전체 경로로
+  if (spawnSync("net", ["user", "srt-sandbox"], {stdio: "ignore", windowsHide: true, timeout: SLOW_MS}).status === 0) return;
+  console.log(`KITDEV-ADMIN: MXC 샌드박스가 이 PC 에서 안 됐습니다${mxcWhy ? ` (${mxcWhy})` : ""} — 다음 순서 srt 샌드박스는 이 PC 에서 처음 한 번 관리자 준비가 필요합니다. 관리자 PowerShell 에서 아래 명령을 실행한 뒤 'check --sandbox srt' 로 srt 만 다시 점검하세요\n& "${process.execPath}" "${cli}" windows-install --proxy-port-range 60080-60143`);   // Node 는 휴대용일 수 있어 PATH 에 없다 — 이 스크립트를 돌린 node 의 전체 경로로
   process.exit(3);
 }
 
-async function envCheck() {
+async function envCheck(only) {
   say("환경 점검 — 이 PC 에서 시험 환경(샌드박스·MCP 툴 목록·LLM 게이트웨이)이 실제로 되는지 봅니다");
   // 점검이 끝날 때까지 기다린다 — 줄이 나오는 대로 보여 주고, 출력이 20분(SLOW_MS) 동안 하나도 안 바뀔 때만 멈춘 것으로 보고 끝낸다(출력이 나오면 다시 센다)
-  const c = spawn(process.execPath, [join(KIT, "client", "mcp-test.mjs"), "check"], {cwd: WS, env: {...process.env, KIT_DIR: KIT}, stdio: ["ignore", "pipe", "pipe"], windowsHide: true});
+  const c = spawn(process.execPath, [join(KIT, "client", "mcp-test.mjs"), "check"], {cwd: WS, env: {...process.env, KIT_DIR: KIT, ...(only ? {KIT_SANDBOX_ONLY: only} : {})}, stdio: ["ignore", "pipe", "pipe"], windowsHide: true});
   let out = "", part = "", last = Date.now(), idle = false;
   const seen = d => {
     last = Date.now(); out += d; part += d;
     const lines = part.split(/\r?\n/); part = lines.pop();
-    for (const l of lines) if (l.trim()) say(l.replace(/^mcp-test: /, "  "));
+    for (const l of lines) {
+      if (!l.trim()) continue;
+      if (/순서대로 샌드박스를 띄워/.test(l)) step("샌드박스 점검(MXC → srt · MCP 툴 목록 · LLM)");
+      if (/데모 시험 — /.test(l)) step("데모 시험");
+      say(l.replace(/^mcp-test: /, "  "));
+    }
   };
   c.stdout.on("data", seen);
   c.stderr.on("data", seen);
@@ -548,10 +562,12 @@ async function envCheck() {
   clearInterval(watch);
   if (part.trim()) say(part.replace(/^mcp-test: /, "  "));
   if (idle) die(`환경 점검 출력이 ${SLOW_MS / 60000}분 동안 바뀌지 않아 멈춘 것으로 보고 끝냈습니다 — 마지막 줄: ${out.trim().split(/\r?\n/).pop()}`);
+  if (!/KIT-ENV-OK/.test(out)) srtAdminNeeded(/MXC: (.+?)\s+\/ srt:/.exec(out)?.[1]?.trim().slice(0, 300));
   if (!/KIT-ENV-OK/.test(out)) die(`환경 점검을 통과하지 못해 개발 환경이 아직 준비되지 않았습니다 — ${/KIT-ENV-FAIL: (.+)/.exec(out)?.[1] || `점검 종료 ${code}`}`);
   // 어느 환경에서 시험이 도는지 꼬리표로 — 점검 출력의 '샌드박스 <MXC|srt>' 줄(키트 mcp-test check)에서 읽는다
   const kind = /^(?:mcp-test: )?샌드박스 (MXC|srt)(?= \(앞 순서 안 됨|\s*$)/m.exec(out)?.[1];
   if (!kind) die("환경 점검은 통과했다고 하는데 어느 샌드박스인지 점검 출력에서 찾지 못했습니다 — 샌드박스 없이는 준비됐다고 하지 않습니다");
+  say(`KITDEV-STEP ${steps.length}/${steps.length} (100%) 끝`);
   console.log(`KITDEV-READY: [${kind.toUpperCase()}] 개발 환경 점검 통과 — 이 PC 의 시험(goose)은 ${kind} 샌드박스 안에서 돕니다`);
 }
 
@@ -956,11 +972,12 @@ async function secret(a) {
 }
 
 const a = args(process.argv.slice(2));
+steps = STEPS[a._[0]] || [];
 async function check() {
   const c = conf();
+  step("goose·샌드박스 받기");
   await ensureKit(new Kit(c.public));
-  srtAdminFirst();
-  await envCheck();
+  await envCheck(a.sandbox);
 }
 
 const CMDS = {login, secret, setup, check, ci, test, wait: follow, deploy, status, mode, _bg: bg};
