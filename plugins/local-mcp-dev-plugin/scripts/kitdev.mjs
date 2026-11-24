@@ -475,6 +475,7 @@ async function setup(a) {
 
   // 1) 워크스페이스에 goose · 샌드박스 · mcp-test (사내 설치 스크립트를 KIT_DIR 로)
   await ensureKit(kit, a.reinstall);
+  srtAdminFirst();
 
   // 2) 사내 Git 저장소 연결
   let repo = readJson(CONF)?.repo;
@@ -517,6 +518,17 @@ async function setup(a) {
 
   // 4) 환경 점검 — 설치만으로 '준비됐다'고 하지 않는다. 이 PC 에서 샌드박스(정책대로)를 띄워 MCP 툴 목록을 읽고 LLM 게이트웨이에 닿는지까지 본다
   await envCheck();
+}
+
+// 윈도우 srt 는 처음 한 번 관리자 준비(전용 계정 srt-sandbox·WFP)가 있어야 돈다 — 회사 정책에 srt 가 있는데(설치 스크립트가 srt 를 받았는데) 준비가 안 돼 있으면
+// 개발자 세팅(저장소 연결·환경 점검)으로 가기 전에 멈추고 관리자 명령을 알린다. 사용자가 관리자 PowerShell 에서 실행한 뒤 setup 을 다시 부르면 이어서 간다
+function srtAdminFirst() {
+  if (!WIN) return;
+  const cli = readJson(join(KIT, "kit.json"))?.srt_cli;
+  if (!cli || !existsSync(cli)) return;
+  if (spawnSync("net", ["user", "srt-sandbox"], {stdio: "ignore", windowsHide: true, timeout: SLOW_MS}).status === 0) return say("srt 샌드박스 관리자 준비 O (계정 srt-sandbox 있음)");
+  console.log(`KITDEV-ADMIN: srt 샌드박스는 이 PC 에서 처음 한 번 관리자 준비가 필요합니다 — 관리자 PowerShell 에서 아래 명령을 실행한 뒤 다시 setup 하세요\n& "${process.execPath}" "${cli}" windows-install --proxy-port-range 60080-60143`);   // Node 는 휴대용일 수 있어 PATH 에 없다 — 이 스크립트를 돌린 node 의 전체 경로로
+  process.exit(3);
 }
 
 async function envCheck() {
@@ -947,6 +959,7 @@ const a = args(process.argv.slice(2));
 async function check() {
   const c = conf();
   await ensureKit(new Kit(c.public));
+  srtAdminFirst();
   await envCheck();
 }
 
