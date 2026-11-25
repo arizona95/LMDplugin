@@ -1,7 +1,7 @@
 {
   "name": "local-mcp-dev-plugin",
-  "version": "0.9.29",
-  "description": "사내 MCP 개발 키트 — 워크스페이스에 goose 시험 환경을 만들고(mcp-setup), MCP 를 goose 로 시험하며(mcp-run), 사내 Git 에 배포 요청을 낸다(mcp-deploy). 실행 모드: 심화 검사 = 전체 검사 통과 커밋만 / 기본 검사 = 바뀐 파일 검사 통과 커밋만. 배포는 CI 통과 + 관리자 승인 뒤 회사 Claude 에 자동으로 들어온다.",
+  "version": "0.9.32",
+  "description": "사내 MCP 개발 키트 — 워크스페이스에 시험 도구(mcp-test)를 받고(mcp-setup), 개발 중인 MCP 를 이 PC 에서 직접 띄워 툴을 불러 보며 개발하고(mcp-run — 회사 Claude 에는 승인된 MCP 만 붙으므로), 사내 Git 에 배포 요청을 낸다(mcp-deploy). 개발감사(바뀐 파일 검사)를 통과한 커밋만 시험하고, 배포감사(CI 통과 + 저장소 전체 감시자 검사) + 관리자 승인 뒤 회사 Claude 에 들어온다.",
   "author": {
     "name": "dowoo"
   }

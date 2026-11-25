@@ -2,14 +2,13 @@
 // 사내 MCP 개발 키트 — 개발 플러그인 스크립트(워크스페이스 폴더에서 실행)
 //   (Node 가 없으면 먼저 scripts/node.ps1 · node.sh — 사내 Git 패키지 저장소(tools.json)의 휴대용 Node 를 받아 그 경로를 알려 준다)
 //   login  [--check 1 | --signup 1] [--kit <주소>]          사내 Git 로그인 — check: 저장된 로그인 있나(창 없이) · signup: 가입 페이지를 브라우저로
-//   setup  --kit <주소> [--name <MCP 이름>] [--desc <설명>]   워크스페이스에 goose·mcp-test 설치 + 사내 Git 저장소 연결
-//   check                                                    환경 점검 — MCP 툴 목록·LLM 게이트웨이·데모 시험이 되는지(setup 끝에도 돈다)
-//   ci     [-m <커밋 메시지>]                                  commit·push → 사내 CI 결과를 기다려 통과/실패(실패 줄만) 보고
-//   test   -t <질문> [--with-extension <명령>]                 CI 를 통과한 지금 코드만 goose 로 시험
+//   setup  --kit <주소> [--name <MCP 이름>] [--desc <설명>]   워크스페이스에 mcp-test 설치 + 사내 Git 저장소 연결
+//   check                                                    환경 점검 — 이 PC 에서 MCP 를 띄워 툴 목록을 받고 툴을 부를 수 있는지(setup 끝에도 돈다)
+//   ci     [-m <커밋 메시지>]                                  commit·push → 개발감사(바뀐 파일만 SkillSpector 등) 통과/실패 보고
+//   test   tools | call <툴> [--args <JSON> | --args-file <파일>] [--with-extension <명령>]
+//                                                            검사를 통과한 지금 코드의 MCP 를 띄워 툴 목록 보기 · 툴 하나 불러 결과 보기
 //   wait                                                     뒤에서 도는 시험의 남은 출력·끝을 기다림
-//   deploy                                                   CI 를 통과한 커밋으로 배포 요청
-//   mode   [deep|basic]                                      실행 모드 보기·바꾸기 — deep: 심화 검사(CI 전체 통과 커밋만)
-//                                                            basic: 기본 검사(바뀐 파일 검사 통과 커밋만)
+//   deploy                                                   배포감사 요청 — 사내 CI 통과를 기다려 확인한 뒤 그 커밋으로(중앙 검사 → 관리자 승인)
 //   secret set <이름> | list                                 MCP 비밀값 — set: 이 PC 에 입력 창을 띄워 받은 값을 사내 키 저장소(이 저장소 비밀값)에 바로 넣는다
 //                                                            (값은 Claude 대화·명령줄·파일에 남지 않음) · kit-mcp.json secrets 에 이름도 넣는다
 //   status [<요청 번호>]                                      배포 요청 상태
@@ -68,7 +67,7 @@ function findProxy() {
 // 사내 CA 는 회사 PC 의 OS 인증서 저장소에 있다 — Node 가 그것을 쓰게 한 번 다시 띄운다.
 // --use-system-ca 가 없는 Node(22.15·23.8 전 — 2026-11-14 Azure 사용자 PC 22.12 실측)는 OS 신뢰 저장소(윈도우는 PEM 으로 내보내서)를 NODE_EXTRA_CA_CERTS 로
 if (!process.env.KITDEV_REEXEC) {
-  // 다른 에이전트의 샌드박스(Codex 등) 안에서 불렸으면 멈춘다 — 키트는 goose 를 띄우고 사내 키트에 닿아야 하는데
+  // 다른 에이전트의 샌드박스(Codex 등) 안에서 불렸으면 멈춘다 — 키트는 MCP 를 띄우고 사내 키트에 닿아야 하는데
   // Codex 윈도우 샌드박스는 Node 의 자식 프로세스(파이프)를 EPERM 으로 막고 바깥 네트워크도 막는다(2026-11-23 Azure admin-window-pc · Codex 0.171.0 :workspace 실측)
   {
     const e = process.env, pk = Object.keys(e).find(k => k.toUpperCase() === "PATH") || "PATH";
@@ -79,7 +78,7 @@ if (!process.env.KITDEV_REEXEC) {
     if (p.error && !["EPERM", "EACCES"].includes(p.error.code)) p.error = null;
     if (codex || p.error) {
       console.log(`KITDEV-SANDBOXED: 이 명령이 다른 샌드박스${codex ? "(Codex)" : ""} 안에서 실행됐습니다${p.error ? ` — 자식 프로세스를 띄우지 못함(${p.error.code})` : ""}. `
-        + "키트는 goose 를 띄우고 사내 키트에 연결해야 해서 그 안에서는 설치·시험을 할 수 없습니다. 같은 명령을 샌드박스 밖에서 다시 실행하세요 "
+        + "키트는 MCP 를 띄우고 사내 키트에 연결해야 해서 그 안에서는 설치·시험을 할 수 없습니다. 같은 명령을 샌드박스 밖에서 다시 실행하세요 "
         + "(Codex: 이 명령에 샌드박스 밖 실행 승인을 요청 — sandbox_permissions=require_escalated).");
       process.exit(3);
     }
@@ -184,8 +183,8 @@ if (!process.env.KITDEV_REEXEC) {
 const say = m => console.log(m);
 // 진행 단계 — 'KITDEV-STEP n/N (p%) 이름' 줄. mcp-setup 이 이 이름들로 할 일 목록을 만들어 줄이 나올 때마다 하나씩 체크한다(환경 세팅이 오래 걸려도 어디까지 왔는지 보이게)
 const STEPS = {
-  setup: ["사내 키트 로그인 확인", "goose 받기", "사내 Git 저장소 연결", "환경 점검(MCP 툴 목록 · LLM)", "데모 시험"],
-  check: ["goose 받기", "환경 점검(MCP 툴 목록 · LLM)", "데모 시험"],
+  setup: ["사내 키트 로그인 확인", "시험 도구(mcp-test) 받기", "사내 Git 저장소 연결", "환경 점검(MCP 띄우기 · 툴 목록 · 툴 호출)"],
+  check: ["시험 도구(mcp-test) 받기", "환경 점검(MCP 띄우기 · 툴 목록 · 툴 호출)"],
 };
 let steps = [];
 const step = name => { const i = steps.indexOf(name); if (i >= 0) say(`KITDEV-STEP ${i + 1}/${steps.length} (${Math.round(i * 100 / steps.length)}%) ${name}`); };
@@ -222,7 +221,7 @@ function args(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a.startsWith("--")) out[a.slice(2)] = argv[++i];
-    else if (a === "-m" || a === "-t") out[a.slice(1)] = argv[++i];
+    else if (a === "-m") out.m = argv[++i];
     else out._.push(a);
   }
   return out;
@@ -347,7 +346,8 @@ class Kit {
 function ensureIgnore() {
   const f = join(WS, ".gitignore");
   const have = existsSync(f) ? readFileSync(f, "utf8") : "";
-  const need = [".kit/", ".venv/", "__pycache__/"].filter(l => !have.split(/\r?\n/).includes(l));
+  // .claude/ = 이 PC 의 Claude 설정(플러그인을 프로젝트 범위로 깔면 생김) — ci 의 git add -A 가 MCP 저장소에 올리지 않게(2026-11-25 Azure 실측)
+  const need = [".kit/", ".venv/", "__pycache__/", ".claude/"].filter(l => !have.split(/\r?\n/).includes(l));
   if (need.length) appendFileSync(f, (have && !have.endsWith("\n") ? "\n" : "") + need.join("\n") + "\n");
 }
 
@@ -359,8 +359,8 @@ async function ensureKit(kit, force) {
   const body = await kit.must("GET", WIN ? "/download/install.ps1" : "/download/install.sh", null, {raw: true});
   const prev = existsSync(script) ? readFileSync(script, "utf8").replace(/^\uFEFF/, "") : null;
   if (!existsSync(join(KIT, "kit.json")) || force || prev !== body) {
-    if (prev !== null && prev !== body) say("사내 키트가 바뀌어 goose 시험 환경을 새로 받습니다");
-    say("goose 를 받습니다 — 네트워크 경로에 따라 몇 초에서 수십 분까지 걸립니다. 20초마다 '몇 % 완료되었습니다' 줄이 나오면 받는 중이니 끊지 말고 기다리세요");
+    if (prev !== null && prev !== body) say("사내 키트가 바뀌어 시험 도구(mcp-test)를 새로 받습니다");
+    say("시험 도구(mcp-test)를 받습니다 — 20초마다 '몇 % 완료되었습니다' 줄이 나오면 받는 중이니 끊지 말고 기다리세요");
     const code = (await kit.must("POST", "/api/dlcode")).code;
     const env = {...process.env, KIT_TOKEN: code, KIT_DIR: KIT};
     let r;
@@ -376,8 +376,8 @@ async function ensureKit(kit, force) {
       writeFileSync(script, body);
       r = spawnSync("sh", [script], {cwd: WS, env, stdio: "inherit"});
     }
-    if (r.status !== 0) die("goose 시험 환경 설치가 실패했습니다(위 출력 참고)");
-  } else say(`goose 시험 환경은 최신입니다 (${KIT})`);
+    if (r.status !== 0) die("시험 도구(mcp-test) 설치가 실패했습니다(위 출력 참고)");
+  } else say(`시험 도구(mcp-test)는 최신입니다 (${KIT})`);
 }
 
 function kitAddr(a) {
@@ -462,10 +462,10 @@ async function setup(a) {
   const kit = new Kit(pub);
   const me = await kit.must("GET", "/api/download");
   kit.cred.approve();
-  say(`사내 키트 ${pub} 로그인 확인 · goose ${me.version}`);
+  say(`사내 키트 ${pub} 로그인 확인`);
 
-  // 1) 워크스페이스에 goose · mcp-test (사내 설치 스크립트를 KIT_DIR 로)
-  step("goose 받기");
+  // 1) 워크스페이스에 mcp-test (사내 설치 스크립트를 KIT_DIR 로)
+  step("시험 도구(mcp-test) 받기");
   await ensureKit(kit, a.reinstall);
 
   // 2) 사내 Git 저장소 연결
@@ -507,12 +507,12 @@ async function setup(a) {
   writeFileSync(CONF, JSON.stringify({public: pub, repo}, null, 1));
   say(`설치 끝 — 저장소 ${pub}/git/${repo} · 시험 도구 ${KIT}`);
 
-  // 4) 환경 점검 — 설치만으로 '준비됐다'고 하지 않는다. 이 PC 에서 MCP 툴 목록을 읽고 LLM 게이트웨이에 닿고 goose 가 데모 툴을 부르는지까지 본다
+  // 4) 환경 점검 — 설치만으로 '준비됐다'고 하지 않는다. 이 PC 에서 MCP 를 띄워 툴 목록을 받고 툴을 불러 결과가 오는지까지 본다
   await envCheck();
 }
 
 async function envCheck() {
-  say("환경 점검 — 이 PC 에서 시험 환경(MCP 툴 목록·LLM 게이트웨이·goose)이 실제로 되는지 봅니다");
+  say("환경 점검 — 이 PC 에서 MCP 를 띄워 툴 목록을 받고 툴을 부를 수 있는지 봅니다");
   // 점검이 끝날 때까지 기다린다 — 줄이 나오는 대로 보여 주고, 출력이 20분(SLOW_MS) 동안 하나도 안 바뀔 때만 멈춘 것으로 보고 끝낸다(출력이 나오면 다시 센다)
   const c = spawn(process.execPath, [join(KIT, "client", "mcp-test.mjs"), "check"], {cwd: WS, env: {...process.env, KIT_DIR: KIT}, stdio: ["ignore", "pipe", "pipe"], windowsHide: true});
   let out = "", part = "", last = Date.now(), idle = false;
@@ -521,8 +521,7 @@ async function envCheck() {
     const lines = part.split(/\r?\n/); part = lines.pop();
     for (const l of lines) {
       if (!l.trim()) continue;
-      if (/점검용 MCP 서버의 툴 목록/.test(l)) step("환경 점검(MCP 툴 목록 · LLM)");
-      if (/데모 시험 — /.test(l)) step("데모 시험");
+      if (/점검용 MCP 서버를 띄워/.test(l)) step("환경 점검(MCP 띄우기 · 툴 목록 · 툴 호출)");
       say(l.replace(/^mcp-test: /, "  "));
     }
   };
@@ -593,50 +592,40 @@ async function rerunIfStale(kit, repo, sha) {
   die("CI 를 다시 돌리라고 했지만 60초 안에 시작되지 않았습니다 — 사내 CI 러너 상태를 관리자에게 확인하세요");
 }
 
+// 개발감사 — push 하고 마지막으로 통과한 커밋과 비교해 바뀐 파일만 검사 세트 basic/(SkillSpector 등)로(키트가 바로 돌려 준다).
+// 통과한 커밋만 test 로 띄운다. 사내 CI 워크플로는 push 마다 뒤에서 돌고 배포 요청(deploy) 때 확인한다
 async function ci(a) {
   const c = conf();
   const kit = new Kit(c.public);
-  const mode = (await kit.must("GET", "/api/devkit/mode")).mode;
+  ensureIgnore();
   mustGit("add", "-A");
   if (git("diff", "--cached", "--quiet").ok === false) mustGit("commit", "-q", "-m", a.m || `kit-dev ${new Date().toISOString().slice(0, 16)}`);
   const sha = mustGit("rev-parse", "HEAD");
   const tree = mustGit("rev-parse", "HEAD^{tree}");
   const prev = readJson(LAST);
-  if (prev?.tree === tree && prev.ok && prev.mode === mode && git("rev-parse", "origin/main").out === sha) {
-    say(`${mode === "basic" ? "기본" : "심화"} 검사 통과(이미 검사한 내용 — ${prev.sha.slice(0, 12)}) · 다시 돌리지 않습니다`);
+  if (prev?.tree === tree && prev.ok && prev.audit === "dev" && git("rev-parse", "origin/main").out === sha) {
+    say(`개발감사 통과(이미 검사한 내용 — ${prev.sha.slice(0, 12)}) · 다시 돌리지 않습니다`);
     return;
   }
   kit.auth();
   const push = git("push", "-q", "origin", "HEAD:main");
   if (!push.ok) die(`push 실패: ${push.err}`);
   kit.cred.approve();
-  if (mode === "basic") return basicCheck(kit, c, sha, tree);
-  say(`올림 ${sha.slice(0, 12)} — 심화 검사(사내 CI 전체) 결과를 기다립니다`);
-  await rerunIfStale(kit, c.repo, sha);
-  const t0 = Date.now();
-  const st = await ciResult(kit, c.repo, sha);
-  const sec = Math.round((Date.now() - t0) / 1000);
-  const ok = st.state === "success";
-  writeFileSync(LAST, JSON.stringify({sha, tree, ok, mode: "deep", state: st.state, at: new Date().toISOString(), sec}, null, 1));
-  if (ok) { say(`심화 검사 통과 ${sha.slice(0, 12)} (${sec}초) — 이제 mcp-run 의 시험(test)을 할 수 있습니다`); return; }
-  say(`심화 검사 실패 ${sha.slice(0, 12)} (${sec}초, 상태 ${st.state})`);
-  say(await failureLog(kit, c.repo, sha));
-  process.exit(1);
+  return devAudit(kit, c, sha, tree);
 }
 
-// 기본 검사 — 마지막으로 통과한 커밋과 비교해 바뀐 파일만, 관리자가 고른 '기본' 감시자로(키트가 바로 돌려 준다)
-async function basicCheck(kit, c, sha, tree) {
-  say(`올림 ${sha.slice(0, 12)} — 기본 검사(바뀐 파일만)`);
+async function devAudit(kit, c, sha, tree) {
+  say(`올림 ${sha.slice(0, 12)} — 개발감사(바뀐 파일만)`);
   const t0 = Date.now();
   const r = await kit.must("POST", "/api/ci/basic", {repo: c.repo, sha});
   const sec = Math.round((Date.now() - t0) / 1000);
   const ok = r.verdict === "통과";
-  writeFileSync(LAST, JSON.stringify({sha, tree, ok, mode: "basic", at: new Date().toISOString(), sec}, null, 1));
+  writeFileSync(LAST, JSON.stringify({sha, tree, ok, audit: "dev", at: new Date().toISOString(), sec}, null, 1));
   say(`  비교 기준 ${r.base ? r.base.slice(0, 12) : "없음(처음 — 전체 파일)"} · 검사한 파일 ${r.files}개`);
   for (const st of r.steps || []) say(`  - ${st.name}: ${st.ok ? "통과" : "오류 " + (st.error || "")} (${st.sec}초, 걸린 것 ${st.findings ?? 0})`);
   for (const f of (r.findings || []).slice(0, 20)) say(`  [${f.severity}] ${f.title} — ${f.file || ""}${f.line ? ":" + f.line : ""}`);
-  if (ok) { say(`기본 검사 통과 ${sha.slice(0, 12)} (위험 점수 ${r.risk_score ?? 0}/100, ${sec}초) — 이제 mcp-run 의 시험(test)을 할 수 있습니다`); return; }
-  say(`KITCI-FAIL: 기본 검사 실패 — 위험 점수 ${r.risk_score ?? "?"}/100(51점 이상이거나 critical 이면 차단, 검사 단계 오류도 실패). 위 항목을 고친 뒤 다시 ci`);
+  if (ok) { say(`개발감사 통과 ${sha.slice(0, 12)} (위험 점수 ${r.risk_score ?? 0}/100, ${sec}초) — 이제 mcp-run 의 시험(test)을 할 수 있습니다`); return; }
+  say(`KITCI-FAIL: 개발감사 실패 — 위험 점수 ${r.risk_score ?? "?"}/100(51점 이상이거나 critical 이면 차단, 검사 단계 오류도 실패). 위 항목을 고친 뒤 다시 ci`);
   process.exit(1);
 }
 
@@ -678,7 +667,7 @@ async function ensureVenv(c) {
   writeFileSync(marker, sig);
 }
 
-// 개발자 주간 LLM 한도(goose 시험 + 배포 검사) — 실행할 때마다 알린다
+// 개발자 주간 LLM 한도(배포 검사) — 배포 요청할 때 알린다
 async function budgetLine(kit) {
   const r = await kit.call("GET", "/api/devkit/budget");
   if (!r.data) return;
@@ -687,26 +676,25 @@ async function budgetLine(kit) {
   const usd = v => `$${v > 0 && v < 0.01 ? v.toFixed(4) : v.toFixed(2)}`;
   const lim = b.limit_usd ? usd(b.limit_usd) : "무제한";
   say(`이번 주 LLM 사용 ${usd(b.spent_usd)} / 한도 ${lim}${b.left_usd != null ? ` (남은 ${usd(b.left_usd)})` : ""} — 월요일 0시에 다시 시작`);
-  if (b.over) say("  한도를 다 써서 goose 시험의 LLM 호출과 배포 요청이 막힙니다 — 관리자에게 한도를 늘려 달라고 하세요");
+  if (b.over) say("  한도를 다 써서 배포 요청이 막힙니다 — 관리자에게 한도를 늘려 달라고 하세요");
 }
 
 async function test(a) {
   const c = conf();
-  if (!a.t) die("시험 질문이 필요합니다 — test -t \"질문\"");
-  const m = await new Kit(c.public).must("GET", "/api/devkit/mode");
-  const name = m.mode === "basic" ? "기본" : "심화";
-  if (git("status", "--porcelain").out) die(`${name} 검사 모드입니다 — 검사를 거치지 않은 변경이 있습니다. 먼저 ci 로 올려 통과시키세요`);
+  const [, what, tool] = a._;
+  if (what !== "tools" && !(what === "call" && tool)) die("사용: test tools  |  test call <툴 이름> [--args <JSON> | --args-file <JSON 파일>]");
+  if (git("status", "--porcelain").out) die("개발감사를 거치지 않은 변경이 있습니다 — 먼저 ci 로 올려 통과시키세요");
   const sha = mustGit("rev-parse", "HEAD");
   const last = readJson(LAST);
-  if (!last || last.sha !== sha || !last.ok || (last.mode || "deep") !== m.mode) die(`${name} 검사 모드입니다 — 지금 코드(${sha.slice(0, 12)})는 ${name} 검사를 통과하지 않았습니다. 먼저 ci`);
-  say(`${name} 검사 모드 — ${name} 검사를 통과한 커밋(${sha.slice(0, 12)})으로 시험합니다`);
+  if (!last || last.sha !== sha || !last.ok || last.audit !== "dev") die(`지금 코드(${sha.slice(0, 12)})는 개발감사를 통과하지 않았습니다. 먼저 ci`);
+  say(`개발감사를 통과한 커밋(${sha.slice(0, 12)})으로 시험합니다`);
   await ensureKit(new Kit(c.public));
-  await budgetLine(new Kit(c.public));
   await ensureVenv(c);
   const entry = a["with-extension"] || readJson(join(WS, "kit-mcp.json"))?.entry || die("kit-mcp.json 에 entry 가 없습니다");
-  say(`goose 로 시험 — MCP: ${entry}`);
-  // mcp-test.cmd 를 shell 로 띄우면 Node 가 인자를 따옴표 없이 이어 붙여 공백 든 질문이 쪼개진다 — node 로 바로
-  const argv = [join(KIT, "client", "mcp-test.mjs"), "run", "-t", a.t, "--with-extension", entry];
+  say(`MCP 를 이 PC 에서 띄워 ${what === "tools" ? "툴 목록을 받습니다" : `툴 ${tool} 을 부릅니다`} — MCP: ${entry}`);
+  // mcp-test.cmd 를 shell 로 띄우면 Node 가 인자를 따옴표 없이 이어 붙여 공백 든 인자가 쪼개진다 — node 로 바로
+  const argv = [join(KIT, "client", "mcp-test.mjs"), what, ...(tool ? [tool] : []), "--with-extension", entry,
+    ...(a.args !== undefined ? ["--args", a.args] : []), ...(a["args-file"] ? ["--args-file", a["args-file"]] : [])];
   if (process.stdin.isTTY) {
     const child = spawn(process.execPath, argv, {cwd: WS, stdio: "inherit", env: {...process.env, KIT_DIR: KIT}});
     child.on("exit", code => process.exit(code ?? 1));
@@ -752,7 +740,7 @@ async function follow() {
       writeFileSync(join(RUN, "state.json"), JSON.stringify(st));
     }
     const done = readJson(join(RUN, "exit.json"));
-    if (done) { const c = readJson(CONF); if (c) await budgetLine(new Kit(c.public)); process.exit(done.code); }
+    if (done) process.exit(done.code);
     // 뒤 프로세스가 결과 없이 사라졌으면(강제 종료·재부팅) 기다리지 않는다
     const pf = join(RUN, "bg.pid"), pid = existsSync(pf) ? Number(readFileSync(pf, "utf8")) : 0;
     if (pid && !alive(pid) && !readJson(join(RUN, "exit.json"))) die(`뒤에서 돌던 시험(프로세스 ${pid})이 결과 없이 끝났습니다 — 출력: ${join(RUN, "log.txt")}. 다시 test`);
@@ -769,35 +757,19 @@ async function deploy() {
   const sha = mustGit("rev-parse", "HEAD");
   git("fetch", "-q", "origin");
   if (git("rev-parse", "origin/main").out !== sha) die("사내 Git 의 main 이 지금 코드와 다릅니다 — 먼저 ci");
+  // 배포감사 전 조건 — 사내 CI(빌드·tools/list·테스트·저장소 전체 키트 검사)는 push 마다 뒤에서 돈다. 그 결과를 기다려 확인한다
+  say(`배포감사 전에 사내 CI 결과를 확인합니다(커밋 ${sha.slice(0, 12)})`);
+  await rerunIfStale(kit, c.repo, sha);
+  const st = await ciResult(kit, c.repo, sha);
+  if (st.state !== "success") { say(`사내 CI 실패 ${sha.slice(0, 12)} (상태 ${st.state})`); say(await failureLog(kit, c.repo, sha)); process.exit(1); }
   const gate = await kit.must("GET", `/api/ci/gate?repo=${encodeURIComponent(c.repo)}&ref=main`);
-  if (!gate.ok) die(`CI 를 통과하지 않은 커밋입니다(${gate.why.join(", ")}) — 먼저 ci`);
+  if (!gate.ok) die(`CI 를 통과하지 않은 커밋입니다(${gate.why.join(", ")}) — 고친 뒤 ci 로 올리고 다시 deploy`);
   const r = await kit.must("POST", "/api/requests", {repo: c.repo, ref: "main"});
   writeFileSync(join(KIT, "last-request.json"), JSON.stringify({id: r.id, sha}, null, 1));
-  say(`배포 요청 ${r.id} 을 냈습니다 (커밋 ${sha.slice(0, 12)}) — 중앙 검사가 끝나면 관리자가 승인합니다`);
+  say(`배포 요청 ${r.id} 을 냈습니다 (커밋 ${sha.slice(0, 12)}) — 배포감사(저장소 전체 중앙 검사)가 끝나면 관리자가 승인합니다`);
   say(`화면: ${c.public}/mcp  ·  상태 보기: status ${r.id}`);
 }
 
-async function mode(a) {
-  // setup 전(로그인 직후)에도 묻는다 — 워크스페이스가 없으면 키트 주소는 login 과 같은 곳에서
-  const kit = new Kit(kitAddr(a));
-  const want = a._[1];
-  if (want && !["deep", "basic"].includes(want)) die("mode deep(심화 검사) 또는 mode basic(기본 검사)");
-  const m = want ? {...await kit.must("GET", "/api/devkit/mode"), ...await kit.must("POST", "/api/devkit/mode", {mode: want, via: "plugin"})}
-    : await kit.must("GET", "/api/devkit/mode");
-  say(`KITDEV-MODE: ${m.mode}`);
-  say(`지금 실행 모드: ${m.mode === "deep" ? "심화 검사" : "기본 검사"}`);
-  if (want) return say(m.mode === "deep" ? "  시험 전 심화 검사(CI 전체) 통과 필요" : "  시험 전 기본 검사(바뀐 파일) 통과 필요");
-  // 처음 고를 때 보여 줄 설명 — 값은 지금 관리자 정책에서 읽는다
-  say("");
-  say("goose 시험 전에 거칠 검사가 모드마다 다릅니다.");
-  say("1) 심화 검사(deep) — 시험 전에 사내 CI 전체(빌드·도구 목록·테스트·저장소 전체 보안 검사)를 통과해야 합니다.");
-  say("   코드를 바꿀 때마다 커밋·push 후 CI 를 기다립니다(보통 수십 초~몇 분).");
-  say("2) 기본 검사(basic) — 시험 전 검사는 바뀐 파일만 보는 기본 검사라 빠릅니다.");
-  if (!m.basic_allowed) say("   ※ 지금 관리자가 기본 검사 모드를 허용하지 않아 고를 수 없습니다.");
-  say("");
-  say("- 모드는 언제든 바꿀 수 있습니다(바꿀 때마다 감사 기록이 남습니다). 배포 요청의 중앙 검사는 모드와 상관없이 같습니다.");
-  say("- 바꾸는 법: Claude 에게 \"심화 검사로 바꿔줘\" / \"기본 검사로 바꿔줘\" 라고 하거나, 포털에서 바꿉니다.");
-}
 
 const STATUS = {queued: "검사 대기", running: "검사 중", done: "검사 끝"};
 const DECISION = {pending: "관리자 승인 대기", approved: "승인 — Claude 에 배포됨", rejected: "반려"};
@@ -926,17 +898,17 @@ async function secret(a) {
   if (r.error !== undefined && ![201, 204].includes(r.status)) die(`키 저장소에 넣지 못했습니다: ${r.error}`);
   const mf = join(WS, "kit-mcp.json"), m = readJson(mf);
   if (m && !(m.secrets || []).includes(name)) { m.secrets = [...(m.secrets || []), name]; writeFileSync(mf, JSON.stringify(m, null, 2) + "\n"); }
-  say(`KITDEV-SECRET: ${name} 을 사내 키 저장소(${c.repo})에 넣었습니다 — 시험(goose)과 배포된 MCP 실행 때 환경 변수 ${name} 으로 들어갑니다`);
+  say(`KITDEV-SECRET: ${name} 을 사내 키 저장소(${c.repo})에 넣었습니다 — 시험(mcp-test)과 배포된 MCP 실행 때 환경 변수 ${name} 으로 들어갑니다`);
 }
 
 const a = args(process.argv.slice(2));
 steps = STEPS[a._[0]] || [];
 async function check() {
   const c = conf();
-  step("goose 받기");
+  step("시험 도구(mcp-test) 받기");
   await ensureKit(new Kit(c.public));
   await envCheck();
 }
 
-const CMDS = {login, secret, setup, check, ci, test, wait: follow, deploy, status, mode, _bg: bg};
+const CMDS = {login, secret, setup, check, ci, test, wait: follow, deploy, status, _bg: bg};
 (CMDS[a._[0]] || (() => die(`사용: kitdev ${Object.keys(CMDS).join("|")}`, 2)))(a);
