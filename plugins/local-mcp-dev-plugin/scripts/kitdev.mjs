@@ -2,14 +2,14 @@
 // 사내 MCP 개발 키트 — 개발 플러그인 스크립트(워크스페이스 폴더에서 실행)
 //   (Node 가 없으면 먼저 scripts/node.ps1 · node.sh — 사내 Git 패키지 저장소(tools.json)의 휴대용 Node 를 받아 그 경로를 알려 준다)
 //   login  [--check 1 | --signup 1] [--kit <주소>]          사내 Git 로그인 — check: 저장된 로그인 있나(창 없이) · signup: 가입 페이지를 브라우저로
-//   setup  --kit <주소> [--name <MCP 이름>] [--desc <설명>]   워크스페이스에 goose·샌드박스·mcp-test 설치 + 사내 Git 저장소 연결
-//   check                                                    환경 점검 — 샌드박스(정책대로)에서 MCP 툴 목록·LLM 게이트웨이가 되는지(setup 끝에도 돈다)
+//   setup  --kit <주소> [--name <MCP 이름>] [--desc <설명>]   워크스페이스에 goose·mcp-test 설치 + 사내 Git 저장소 연결
+//   check                                                    환경 점검 — MCP 툴 목록·LLM 게이트웨이·데모 시험이 되는지(setup 끝에도 돈다)
 //   ci     [-m <커밋 메시지>]                                  commit·push → 사내 CI 결과를 기다려 통과/실패(실패 줄만) 보고
-//   test   -t <질문> [--with-extension <명령>]                 CI 를 통과한 지금 코드만 goose(MXC 샌드박스)에서 시험
+//   test   -t <질문> [--with-extension <명령>]                 CI 를 통과한 지금 코드만 goose 로 시험
 //   wait                                                     뒤에서 도는 시험의 남은 출력·끝을 기다림
 //   deploy                                                   CI 를 통과한 커밋으로 배포 요청
-//   mode   [deep|basic]                                      실행 모드 보기·바꾸기 — deep: 심화 검사(CI 전체 통과 커밋만 · 바깥 네트워크 열림)
-//                                                            basic: 기본 검사(바뀐 파일 검사 통과 커밋만 · 관리자 허용 목록 네트워크만)
+//   mode   [deep|basic]                                      실행 모드 보기·바꾸기 — deep: 심화 검사(CI 전체 통과 커밋만)
+//                                                            basic: 기본 검사(바뀐 파일 검사 통과 커밋만)
 //   secret set <이름> | list                                 MCP 비밀값 — set: 이 PC 에 입력 창을 띄워 받은 값을 사내 키 저장소(이 저장소 비밀값)에 바로 넣는다
 //                                                            (값은 Claude 대화·명령줄·파일에 남지 않음) · kit-mcp.json secrets 에 이름도 넣는다
 //   status [<요청 번호>]                                      배포 요청 상태
@@ -17,9 +17,9 @@
 import { spawnSync, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, rmSync, openSync, closeSync, statSync, readdirSync, renameSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, rmSync, openSync, closeSync, statSync, readdirSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { tmpdir, homedir, release } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const WIN = process.platform === "win32";
@@ -68,7 +68,7 @@ function findProxy() {
 // 사내 CA 는 회사 PC 의 OS 인증서 저장소에 있다 — Node 가 그것을 쓰게 한 번 다시 띄운다.
 // --use-system-ca 가 없는 Node(22.15·23.8 전 — 2026-11-14 Azure 사용자 PC 22.12 실측)는 OS 신뢰 저장소(윈도우는 PEM 으로 내보내서)를 NODE_EXTRA_CA_CERTS 로
 if (!process.env.KITDEV_REEXEC) {
-  // 다른 에이전트의 샌드박스(Codex 등) 안에서 불렸으면 멈춘다 — 키트는 goose·자기 샌드박스(MXC·srt)를 띄우고 사내 키트에 닿아야 하는데
+  // 다른 에이전트의 샌드박스(Codex 등) 안에서 불렸으면 멈춘다 — 키트는 goose 를 띄우고 사내 키트에 닿아야 하는데
   // Codex 윈도우 샌드박스는 Node 의 자식 프로세스(파이프)를 EPERM 으로 막고 바깥 네트워크도 막는다(2026-11-23 Azure admin-window-pc · Codex 0.171.0 :workspace 실측)
   {
     const e = process.env, pk = Object.keys(e).find(k => k.toUpperCase() === "PATH") || "PATH";
@@ -79,7 +79,7 @@ if (!process.env.KITDEV_REEXEC) {
     if (p.error && !["EPERM", "EACCES"].includes(p.error.code)) p.error = null;
     if (codex || p.error) {
       console.log(`KITDEV-SANDBOXED: 이 명령이 다른 샌드박스${codex ? "(Codex)" : ""} 안에서 실행됐습니다${p.error ? ` — 자식 프로세스를 띄우지 못함(${p.error.code})` : ""}. `
-        + "키트는 시험용 샌드박스를 직접 띄우고 사내 키트에 연결해야 해서 그 안에서는 설치·시험을 할 수 없습니다. 같은 명령을 샌드박스 밖에서 다시 실행하세요 "
+        + "키트는 goose 를 띄우고 사내 키트에 연결해야 해서 그 안에서는 설치·시험을 할 수 없습니다. 같은 명령을 샌드박스 밖에서 다시 실행하세요 "
         + "(Codex: 이 명령에 샌드박스 밖 실행 승인을 요청 — sandbox_permissions=require_escalated).");
       process.exit(3);
     }
@@ -184,8 +184,8 @@ if (!process.env.KITDEV_REEXEC) {
 const say = m => console.log(m);
 // 진행 단계 — 'KITDEV-STEP n/N (p%) 이름' 줄. mcp-setup 이 이 이름들로 할 일 목록을 만들어 줄이 나올 때마다 하나씩 체크한다(환경 세팅이 오래 걸려도 어디까지 왔는지 보이게)
 const STEPS = {
-  setup: ["사내 키트 로그인 확인", "goose·샌드박스 받기", "사내 Git 저장소 연결", "샌드박스 점검(MXC → srt · MCP 툴 목록 · LLM)", "데모 시험"],
-  check: ["goose·샌드박스 받기", "샌드박스 점검(MXC → srt · MCP 툴 목록 · LLM)", "데모 시험"],
+  setup: ["사내 키트 로그인 확인", "goose 받기", "사내 Git 저장소 연결", "환경 점검(MCP 툴 목록 · LLM)", "데모 시험"],
+  check: ["goose 받기", "환경 점검(MCP 툴 목록 · LLM)", "데모 시험"],
 };
 let steps = [];
 const step = name => { const i = steps.indexOf(name); if (i >= 0) say(`KITDEV-STEP ${i + 1}/${steps.length} (${Math.round(i * 100 / steps.length)}%) ${name}`); };
@@ -353,14 +353,14 @@ function ensureIgnore() {
 
 function writeBom(file, text) { writeFileSync(file, "﻿" + text, "utf8"); }
 
-// 설치 스크립트에는 클라이언트·샌드박스 파일 해시가 들어 있다 — 지난번에 받은 것과 다르면 키트가 바뀐 것이니 다시 설치(setup·test 공용)
+// 설치 스크립트에는 클라이언트 파일 해시가 들어 있다 — 지난번에 받은 것과 다르면 키트가 바뀐 것이니 다시 설치(setup·test 공용)
 async function ensureKit(kit, force) {
   const script = join(KIT, WIN ? "install.ps1" : "install.sh");
   const body = await kit.must("GET", WIN ? "/download/install.ps1" : "/download/install.sh", null, {raw: true});
   const prev = existsSync(script) ? readFileSync(script, "utf8").replace(/^\uFEFF/, "") : null;
   if (!existsSync(join(KIT, "kit.json")) || force || prev !== body) {
     if (prev !== null && prev !== body) say("사내 키트가 바뀌어 goose 시험 환경을 새로 받습니다");
-    say("goose·샌드박스를 받습니다(약 100 MB) — 네트워크 경로에 따라 몇 초에서 수십 분까지 걸립니다. 20초마다 '몇 % 완료되었습니다' 줄이 나오면 받는 중이니 끊지 말고 기다리세요");
+    say("goose 를 받습니다 — 네트워크 경로에 따라 몇 초에서 수십 분까지 걸립니다. 20초마다 '몇 % 완료되었습니다' 줄이 나오면 받는 중이니 끊지 말고 기다리세요");
     const code = (await kit.must("POST", "/api/dlcode")).code;
     const env = {...process.env, KIT_TOKEN: code, KIT_DIR: KIT};
     let r;
@@ -452,25 +452,8 @@ async function login(a) {
   say(`KITDEV-LOGIN: 로그인 확인 — 계정 ${kit.cred.user} (다음부터는 묻지 않습니다)`);
 }
 
-// 윈도우 워크스페이스는 내 사용자 폴더 안에만 — 샌드박스(MXC) 컨테이너가 쓸 수 있는 곳이 거기뿐이다
-// (2026-11-19 사내 PC 윈도우 11 23H2 실측: C:\Users\<나>\Desktop 아래 읽기·쓰기 됨 · D:\ · D:\LocalMCPDev · D:\Personal Folder 는 쓰기를 열어 줘도
-//  컨테이너 안에서 '쓰기 방지된 미디어' · C:\Knox Drive 는 PC 에서도 폴더를 못 만듦 · D:\Secure Folder 는 폴더를 못 만듦)
-function placeCheck(name) {
-  const home = process.env.USERPROFILE || homedir();
-  const real = p => { try { return realpathSync(p); } catch { return p; } };
-  const norm = p => real(p).toLowerCase().replace(/[\\/]+$/, "");
-  const ws = norm(WS), h = norm(home);
-  if (ws.startsWith(h + "\\") && ws !== h) return;
-  const eg = join(home, "Desktop", "LocalMcpDev", name || "<MCP 이름>");
-  die(`이 폴더(${WS})는 MCP 워크스페이스로 쓸 수 없습니다 — 샌드박스 시험은 내 사용자 폴더(${home}) 안에서만 됩니다(D 드라이브·C:\\Knox Drive 는 샌드박스가 쓰지 못합니다). `
-    + `이 폴더를 만들고 그 폴더에서 Claude Code 를 다시 연 뒤 다시 실행하세요: ${eg}`);
-}
-
 async function setup(a) {
-  if (!WIN && process.platform !== "linux") die("사내 MCP 개발 키트는 윈도우 11 과 리눅스 개발자 PC 를 지원합니다(MXC 샌드박스)");
-  // 윈도우 10(빌드 22000 아래)은 MXC 가 폴더 권한(DACL)을 바꾸는 방식으로만 돈다 — 관리자 폴더(Program Files 의 Node·Python)를 못 바꿔 시험이 뜨지 않는다(2026-11-16 실측)
-  if (WIN && Number(release().split(".")[2]) < 22000) die(`이 PC 는 윈도우 10(빌드 ${release()})입니다 — 사내 MCP 개발 키트의 샌드박스는 윈도우 11 과 리눅스에서만 돕니다. 윈도우 11 PC 에서 하세요`);
-  if (WIN) placeCheck(a.name);
+  if (!WIN && process.platform !== "linux") die("사내 MCP 개발 키트는 윈도우와 리눅스 개발자 PC 를 지원합니다");
   const pub = kitAddr(a);
   if (run("git", ["--version"]).status !== 0) die("git 이 없습니다 — Git for Windows 를 설치하세요");
   mkdirSync(KIT, {recursive: true});
@@ -481,8 +464,8 @@ async function setup(a) {
   kit.cred.approve();
   say(`사내 키트 ${pub} 로그인 확인 · goose ${me.version}`);
 
-  // 1) 워크스페이스에 goose · 샌드박스 · mcp-test (사내 설치 스크립트를 KIT_DIR 로)
-  step("goose·샌드박스 받기");
+  // 1) 워크스페이스에 goose · mcp-test (사내 설치 스크립트를 KIT_DIR 로)
+  step("goose 받기");
   await ensureKit(kit, a.reinstall);
 
   // 2) 사내 Git 저장소 연결
@@ -523,34 +506,22 @@ async function setup(a) {
   }
   writeFileSync(CONF, JSON.stringify({public: pub, repo}, null, 1));
   say(`설치 끝 — 저장소 ${pub}/git/${repo} · 시험 도구 ${KIT}`);
-  // 샌드박스는 회사 정책 순서대로 — 리눅스 MXC 관리자 준비(slirp4netns·iptables·AppArmor)가 없으면 install.sh 는 알리고 마치며, 환경 점검이 다음 순서로 내려간다
 
-  // 4) 환경 점검 — 설치만으로 '준비됐다'고 하지 않는다. 이 PC 에서 샌드박스(정책대로)를 띄워 MCP 툴 목록을 읽고 LLM 게이트웨이에 닿는지까지 본다
+  // 4) 환경 점검 — 설치만으로 '준비됐다'고 하지 않는다. 이 PC 에서 MCP 툴 목록을 읽고 LLM 게이트웨이에 닿고 goose 가 데모 툴을 부르는지까지 본다
   await envCheck();
 }
 
-// 윈도우 srt 는 처음 한 번 관리자 준비(전용 계정 srt-sandbox·WFP)가 있어야 돈다 — 점검이 실패했는데(정책 순서 MXC → srt 에서 MXC 가 안 됨) srt 준비가 안 돼 있으면
-// 관리자 명령을 알리고 멈춘다. 사용자가 관리자 PowerShell 에서 실행한 뒤 'check --sandbox srt' 로 srt 만 다시 점검한다(안 된 MXC 를 또 기다리지 않게)
-function srtAdminNeeded(mxcWhy) {
-  if (!WIN) return;
-  const cli = readJson(join(KIT, "kit.json"))?.srt_cli;
-  if (!cli || !existsSync(cli)) return;
-  if (spawnSync("net", ["user", "srt-sandbox"], {stdio: "ignore", windowsHide: true, timeout: SLOW_MS}).status === 0) return;
-  console.log(`KITDEV-ADMIN: MXC 샌드박스가 이 PC 에서 안 됐습니다${mxcWhy ? ` (${mxcWhy})` : ""} — 다음 순서 srt 샌드박스는 이 PC 에서 처음 한 번 관리자 준비가 필요합니다. 관리자 PowerShell 에서 아래 명령을 실행한 뒤 'check --sandbox srt' 로 srt 만 다시 점검하세요\n& "${process.execPath}" "${cli}" windows-install --proxy-port-range 60080-60143`);   // Node 는 휴대용일 수 있어 PATH 에 없다 — 이 스크립트를 돌린 node 의 전체 경로로
-  process.exit(3);
-}
-
-async function envCheck(only) {
-  say("환경 점검 — 이 PC 에서 시험 환경(샌드박스·MCP 툴 목록·LLM 게이트웨이)이 실제로 되는지 봅니다");
+async function envCheck() {
+  say("환경 점검 — 이 PC 에서 시험 환경(MCP 툴 목록·LLM 게이트웨이·goose)이 실제로 되는지 봅니다");
   // 점검이 끝날 때까지 기다린다 — 줄이 나오는 대로 보여 주고, 출력이 20분(SLOW_MS) 동안 하나도 안 바뀔 때만 멈춘 것으로 보고 끝낸다(출력이 나오면 다시 센다)
-  const c = spawn(process.execPath, [join(KIT, "client", "mcp-test.mjs"), "check"], {cwd: WS, env: {...process.env, KIT_DIR: KIT, ...(only ? {KIT_SANDBOX_ONLY: only} : {})}, stdio: ["ignore", "pipe", "pipe"], windowsHide: true});
+  const c = spawn(process.execPath, [join(KIT, "client", "mcp-test.mjs"), "check"], {cwd: WS, env: {...process.env, KIT_DIR: KIT}, stdio: ["ignore", "pipe", "pipe"], windowsHide: true});
   let out = "", part = "", last = Date.now(), idle = false;
   const seen = d => {
     last = Date.now(); out += d; part += d;
     const lines = part.split(/\r?\n/); part = lines.pop();
     for (const l of lines) {
       if (!l.trim()) continue;
-      if (/순서대로 샌드박스를 띄워/.test(l)) step("샌드박스 점검(MXC → srt · MCP 툴 목록 · LLM)");
+      if (/점검용 MCP 서버의 툴 목록/.test(l)) step("환경 점검(MCP 툴 목록 · LLM)");
       if (/데모 시험 — /.test(l)) step("데모 시험");
       say(l.replace(/^mcp-test: /, "  "));
     }
@@ -562,13 +533,9 @@ async function envCheck(only) {
   clearInterval(watch);
   if (part.trim()) say(part.replace(/^mcp-test: /, "  "));
   if (idle) die(`환경 점검 출력이 ${SLOW_MS / 60000}분 동안 바뀌지 않아 멈춘 것으로 보고 끝냈습니다 — 마지막 줄: ${out.trim().split(/\r?\n/).pop()}`);
-  if (!/KIT-ENV-OK/.test(out)) srtAdminNeeded(/MXC: (.+?)\s+\/ srt:/.exec(out)?.[1]?.trim().slice(0, 300));
   if (!/KIT-ENV-OK/.test(out)) die(`환경 점검을 통과하지 못해 개발 환경이 아직 준비되지 않았습니다 — ${/KIT-ENV-FAIL: (.+)/.exec(out)?.[1] || `점검 종료 ${code}`}`);
-  // 어느 환경에서 시험이 도는지 꼬리표로 — 점검 출력의 '샌드박스 <MXC|srt>' 줄(키트 mcp-test check)에서 읽는다
-  const kind = /^(?:mcp-test: )?샌드박스 (MXC|srt)(?= \(앞 순서 안 됨|\s*$)/m.exec(out)?.[1];
-  if (!kind) die("환경 점검은 통과했다고 하는데 어느 샌드박스인지 점검 출력에서 찾지 못했습니다 — 샌드박스 없이는 준비됐다고 하지 않습니다");
   say(`KITDEV-STEP ${steps.length}/${steps.length} (100%) 끝`);
-  console.log(`KITDEV-READY: [${kind.toUpperCase()}] 개발 환경 점검 통과 — 이 PC 의 시험(goose)은 ${kind} 샌드박스 안에서 돕니다`);
+  console.log("KITDEV-READY: 개발 환경 점검 통과");
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -732,13 +699,12 @@ async function test(a) {
   const sha = mustGit("rev-parse", "HEAD");
   const last = readJson(LAST);
   if (!last || last.sha !== sha || !last.ok || (last.mode || "deep") !== m.mode) die(`${name} 검사 모드입니다 — 지금 코드(${sha.slice(0, 12)})는 ${name} 검사를 통과하지 않았습니다. 먼저 ci`);
-  say(m.mode === "basic" ? `기본 검사 모드 — 바깥 네트워크는 관리자 허용 목록(${(m.whitelist || []).join(", ") || "사내 서버만"})으로만 나갑니다`
-    : `심화 검사 모드 — 바깥 네트워크 열림(${(m.open || []).join(", ")})`);
+  say(`${name} 검사 모드 — ${name} 검사를 통과한 커밋(${sha.slice(0, 12)})으로 시험합니다`);
   await ensureKit(new Kit(c.public));
   await budgetLine(new Kit(c.public));
   await ensureVenv(c);
   const entry = a["with-extension"] || readJson(join(WS, "kit-mcp.json"))?.entry || die("kit-mcp.json 에 entry 가 없습니다");
-  say(`goose(샌드박스)로 시험 — MCP: ${entry}`);
+  say(`goose 로 시험 — MCP: ${entry}`);
   // mcp-test.cmd 를 shell 로 띄우면 Node 가 인자를 따옴표 없이 이어 붙여 공백 든 질문이 쪼개진다 — node 로 바로
   const argv = [join(KIT, "client", "mcp-test.mjs"), "run", "-t", a.t, "--with-extension", entry];
   if (process.stdin.isTTY) {
@@ -766,7 +732,7 @@ function bg() {
   const fd = openSync(join(RUN, "log.txt"), "a");
   const end = code => { try { closeSync(fd); } catch {} writeFileSync(join(RUN, "exit.json"), JSON.stringify({code})); process.exit(0); };
   const child = spawn(process.execPath, argv, {cwd: WS, stdio: ["ignore", fd, fd], windowsHide: true, env: process.env});
-  // 못 띄우면(다른 샌드박스 안 EPERM 등) exit 가 오지 않는다 — 까닭을 남기고 끝내야 follow 가 20분을 헛기다리지 않는다
+  // 못 띄우면(EPERM 등) exit 가 오지 않는다 — 까닭을 남기고 끝내야 follow 가 20분을 헛기다리지 않는다
   child.on("error", e => { appendFileSync(join(RUN, "log.txt"), `KITDEV-FAIL: mcp-test 를 띄우지 못했습니다: ${e.message}\n`); end(1); });
   child.on("exit", code => end(code ?? 1));
 }
@@ -818,25 +784,17 @@ async function mode(a) {
   if (want && !["deep", "basic"].includes(want)) die("mode deep(심화 검사) 또는 mode basic(기본 검사)");
   const m = want ? {...await kit.must("GET", "/api/devkit/mode"), ...await kit.must("POST", "/api/devkit/mode", {mode: want, via: "plugin"})}
     : await kit.must("GET", "/api/devkit/mode");
-  const open = (m.open || []).join(", ") || "관리자가 정한 범위";
-  const wl = (m.whitelist || []).join(", ") || "사내 서버만";
   say(`KITDEV-MODE: ${m.mode}`);
   say(`지금 실행 모드: ${m.mode === "deep" ? "심화 검사" : "기본 검사"}`);
-  if (want) return say(m.mode === "deep" ? `  바깥 네트워크: ${open} · 시험 전 심화 검사(CI 전체) 통과 필요`
-    : `  바깥 네트워크: ${wl} · 시험 전 기본 검사(바뀐 파일) 통과 필요`);
+  if (want) return say(m.mode === "deep" ? "  시험 전 심화 검사(CI 전체) 통과 필요" : "  시험 전 기본 검사(바뀐 파일) 통과 필요");
   // 처음 고를 때 보여 줄 설명 — 값은 지금 관리자 정책에서 읽는다
   say("");
-  say("goose 시험 샌드박스에서 MCP 가 바깥으로 나가는 범위와, 시험 전에 거칠 검사가 모드마다 다릅니다.");
-  say("(검증 안 된 코드 · 사내 데이터 · 바깥 통신 셋 중 둘까지만 허용합니다)");
-  say(`1) 심화 검사(deep) — 바깥 네트워크 열림: ${open}`);
-  say("   대가: 시험 전에 사내 CI 전체(빌드·도구 목록·테스트·저장소 전체 보안 검사)를 통과해야 합니다.");
-  say("         코드를 바꿀 때마다 커밋·push 후 CI 를 기다립니다(보통 수십 초~몇 분).");
-  say(`2) 기본 검사(basic) — 바깥 네트워크는 관리자 허용 목록만: ${wl}`);
-  say("   대가: 바깥 API 를 부르는 MCP 는 허용 목록에 없으면 시험에서 막힙니다(관리자에게 추가 요청).");
-  say("         대신 시험 전 검사는 바뀐 파일만 보는 기본 검사라 빠릅니다.");
+  say("goose 시험 전에 거칠 검사가 모드마다 다릅니다.");
+  say("1) 심화 검사(deep) — 시험 전에 사내 CI 전체(빌드·도구 목록·테스트·저장소 전체 보안 검사)를 통과해야 합니다.");
+  say("   코드를 바꿀 때마다 커밋·push 후 CI 를 기다립니다(보통 수십 초~몇 분).");
+  say("2) 기본 검사(basic) — 시험 전 검사는 바뀐 파일만 보는 기본 검사라 빠릅니다.");
   if (!m.basic_allowed) say("   ※ 지금 관리자가 기본 검사 모드를 허용하지 않아 고를 수 없습니다.");
   say("");
-  say("- 열리는 범위·허용 목록은 관리자가 정책에서 바꾸면 다음 시험부터 바로 바뀝니다.");
   say("- 모드는 언제든 바꿀 수 있습니다(바꿀 때마다 감사 기록이 남습니다). 배포 요청의 중앙 검사는 모드와 상관없이 같습니다.");
   say("- 바꾸는 법: Claude 에게 \"심화 검사로 바꿔줘\" / \"기본 검사로 바꿔줘\" 라고 하거나, 포털에서 바꿉니다.");
 }
@@ -975,9 +933,9 @@ const a = args(process.argv.slice(2));
 steps = STEPS[a._[0]] || [];
 async function check() {
   const c = conf();
-  step("goose·샌드박스 받기");
+  step("goose 받기");
   await ensureKit(new Kit(c.public));
-  await envCheck(a.sandbox);
+  await envCheck();
 }
 
 const CMDS = {login, secret, setup, check, ci, test, wait: follow, deploy, status, mode, _bg: bg};

@@ -14,7 +14,7 @@ $sys = (Get-Command node -ErrorAction SilentlyContinue).Source
 if (Ok $sys) { Write-Output "KITDEV-NODE: $sys"; exit 0 }
 
 # %LOCALAPPDATA% 는 안 쓴다 — Claude 데스크톱(MSIX 패키지 앱) 안에서 쓴 파일은 앱 전용 가상 폴더(Packages\Claude_…\LocalCache)로 옮겨져
-# 앱 밖(관리자 PowerShell 의 샌드박스 준비 등)에서는 그 경로에 없다(2026-11-15 윈도우 개발자 PC 실측). 사용자 폴더 바로 아래는 가상화되지 않는다.
+# 앱 밖(관리자 PowerShell 등)에서는 그 경로에 없다(2026-11-15 윈도우 개발자 PC 실측). 사용자 폴더 바로 아래는 가상화되지 않는다.
 $dir = Join-Path $env:USERPROFILE '.mcp-kit\node'
 $exe = Join-Path $dir 'node.exe'
 if (-not (Ok $exe)) {

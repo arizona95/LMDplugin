@@ -8,13 +8,13 @@ description: 사내 MCP 배포 요청 — CI 를 통과한 지금 커밋으로 �
 스크립트: `"<node>" "${CLAUDE_PLUGIN_ROOT}/scripts/kitdev.mjs"`
 (치환되지 않았으면 이 스킬의 Base directory 기준 `../../scripts/kitdev.mjs`)
 
-샌드박스 밖에서 실행: Codex 처럼 명령을 자기 샌드박스 안에서 돌리는 도구에서는 `node.ps1`·`node.sh`·`kitdev.mjs` 명령을 처음부터 샌드박스 밖 실행(Codex: 승인 요청 `sandbox_permissions=require_escalated`)으로 낸다. 샌드박스 안에서 내면 스크립트가 `KITDEV-SANDBOXED:` 를 내고 멈춘다 — 그 줄을 보면 같은 명령을 샌드박스 밖 실행으로 다시 낸다(키트는 시험용 샌드박스를 직접 띄우고 사내 키트에 닿아야 해서 다른 샌드박스 안에서는 못 돈다).
+샌드박스 밖에서 실행: Codex 처럼 명령을 자기 샌드박스 안에서 돌리는 도구에서는 `node.ps1`·`node.sh`·`kitdev.mjs` 명령을 처음부터 샌드박스 밖 실행(Codex: 승인 요청 `sandbox_permissions=require_escalated`)으로 낸다. 샌드박스 안에서 내면 스크립트가 `KITDEV-SANDBOXED:` 를 내고 멈춘다 — 그 줄을 보면 같은 명령을 샌드박스 밖 실행으로 다시 낸다(키트는 goose 를 띄우고 사내 키트에 닿아야 해서 다른 샌드박스 안에서는 못 돈다).
 
 실행기 `<node>`: 이 세션에서 처음 한 번 아래를 실행하고, 마지막 줄 `KITDEV-NODE:` 뒤의 경로를 쓴다.
 - 윈도우: `powershell -NoProfile -ExecutionPolicy Bypass -File "<플러그인 폴더>/scripts/node.ps1"`
 - 리눅스: `sh "<플러그인 폴더>/scripts/node.sh"`
 - PC 에 Node 가 없으면 사내 키트에서 휴대용 Node 를 받아 쓴다(설치·관리자 권한·재시작 없음). 사용자에게 Node 를 설치하라고 하지 않는다.
-- 개발자 PC 는 윈도우 11 과 리눅스를 지원한다. 리눅스는 관리자가 처음 한 번 샌드박스 준비(bubblewrap·slirp4netns·AppArmor 프로필)를 해 둬야 한다 — 없으면 setup 이 그 명령을 알려 주고 멈춘다. 그 줄을 사용자에게 그대로 전하고, 내가 sudo 로 대신 하지 않는다.
+- 개발자 PC 는 윈도우와 리눅스를 지원한다.
 
 ## 배포 요청
 1. 이미 배포(승인)된 적이 있는 MCP 를 고쳐 다시 내는 것이면 `pyproject.toml` 의 `version` 을 올린다(예: 0.1.0 → 0.1.1). 같은 버전으로 내용이 바뀌면 관리자 승인이 거절된다 — 회사 PC 가 같은 버전의 옛 빌드를 계속 쓰기 때문이다.
