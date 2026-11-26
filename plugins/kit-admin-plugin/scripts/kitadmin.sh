@@ -206,6 +206,14 @@ setup() {
     elif openssl verify "$leaf" >/dev/null 2>&1; then ok "공인 CA 인증서(ca.pem 없어도 됨)"
     else miss "사내 CA 인증서(ca.pem) — 서버 인증서를 발급한 CA"; fi
   fi
+  # 이미지 파일 — 묶음 폴더만 복사하면 수 GB 짜리 이미지 tar 가 빠지기 쉽다. 이미 클러스터에 있으면 없어도 된다
+  while read -r kind ref file; do
+    [ -n "$kind" ] || continue
+    if [ -f "$d/$file" ]; then ok "이미지 파일 $file"
+    elif installed && can_sudo && as_root k3s ctr -n k8s.io images ls -q 2>/dev/null | grep -q "^\(docker.io/library/\)\{0,1\}$ref\$"; then ok "이미지 $ref — 이미 이 서버의 쿠버네티스에 있음"
+    else miss "이미지 파일 $file — 묶음(.kit.tar)을 통째로 다시 풀어 주세요(폴더만 복사하면 빠짐)"; fi
+  done < <(cat "$d/k8s/images.txt" 2>/dev/null)
+  [ -f "$d/k8s/images.txt" ] || bad "묶음에 k8s/images.txt 가 없습니다 → 묶음을 다시 풀어 주세요"
   url="$(conf_get "$d" KIT_PUBLIC_URL)"
   if [ -n "$url" ]; then
     host="${url#https://}"; host="${host%%/*}"; host="${host%%:*}"
