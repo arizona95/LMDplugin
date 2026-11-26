@@ -52,13 +52,22 @@ check() {
   fi
   r="$(existing_parent "$root")"; a="$(avail_kib "$r")"
   need=0
-  if [ -n "${1:-}" ]; then
+  # bootstrap 과 같은 기준 — 키트 이미지가 이미 클러스터에 있으면 이미지를 넣지 않으므로 넣을 자리를 따지지 않는다
+  have_img=0
+  if [ -n "${1:-}" ] && installed && can_sudo; then
+    ref="$(awk '$1 == "kit" { print $2 }' "$1/k8s/images.txt" 2>/dev/null)"
+    [ -n "$ref" ] && as_root k3s ctr -n k8s.io images ls -q 2>/dev/null | grep -q "^\(docker.io/library/\)\{0,1\}$ref\$" && have_img=1
+  fi
+  if [ "$have_img" = 1 ]; then
+    ok "디스크 $r 남은 것 $(gib "$a")GB — 이 판의 이미지가 이미 있어 넣을 자리는 필요 없음"
+  elif [ -n "${1:-}" ]; then
     d="$(bundle "$1")"; t=0
     for f in "$d"/*.tar "$d"/k8s/*.tar; do [ -f "$f" ] && t=$((t + $(du -k "$f" | cut -f1))); done
     total="$(df -Pk "$r" | awk 'NR == 2 { print $2 }')"
     need=$((t * 2 + 1048576 + total / 5))
   fi
-  if [ "$need" -gt 0 ]; then
+  if [ "$have_img" = 1 ]; then :
+  elif [ "$need" -gt 0 ]; then
     [ "$a" -ge "$need" ] && ok "디스크 $r 남은 것 $(gib "$a")GB (설치에 $(gib "$need")GB 필요)" \
       || bad "디스크 $r 남은 것 $(gib "$a")GB — 설치에 $(gib "$need")GB 필요(이미지 넣을 자리 + 디스크의 20% 여유) → 디스크를 늘리거나 비우세요"
   else
