@@ -897,7 +897,7 @@ const DECISION = {pending: "관리자 승인 대기", approved: "승인 — Clau
 // 승인된 MCP 가 이 PC 의 회사 Claude 에 들어왔는지 — 플러그인 설치 · 조직 허용 목록(이 PC 에 내려온 조직 설정 사본) 등록
 function deployedHere(name) {
   const home = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
-  const market = readJson(PLUGIN_KIT)?.marketplace || "sds-mcp";
+  const market = readJson(PLUGIN_KIT)?.marketplace || "local-mcp-dev-marketplace";
   const key = `${name}@${market}`;
   const rec = [].concat(readJson(join(home, "plugins", "installed_plugins.json"), {})?.plugins?.[key] || [])[0];
   const srv = rec?.installPath ? readJson(join(rec.installPath, ".mcp.json"))?.mcpServers?.[name] : null;

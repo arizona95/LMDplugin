@@ -3,107 +3,6 @@
 부르는 법: `KA api <메서드> <경로> [JSON 본문 | @파일]` (KA = kitadmin.sh). 권한: 주관리자 > 관리자 > 로그인한 누구나.
 쓰기(POST·PUT·DELETE)는 관리자에게 무엇이 바뀌는지 말하고 '예' 를 받은 뒤에만 부른다.
 
-## 메뉴 '신규 개발' — 화면 `/new`
-- `POST /api/projects` · 로그인한 누구나 — new project
-  - 본문: name: str, description: str = ''
-
-## 메뉴 'MCP 등록' — 화면 `/mcp`
-- `GET /api/repos` · 로그인한 누구나 — my repos
-- `GET /api/requests` · 로그인한 누구나 — list requests
-  - 쿼리: limit=200, before=''
-- `POST /api/requests` · 로그인한 누구나 — new request
-  - 본문: repo: str, ref: str = 'main'
-- `GET /api/requests/{rid}` · 로그인한 누구나 — get request
-- `POST /api/requests/{rid}/decision` · 관리자 — decide
-  - 본문: action: str, reason: str = ''
-- `POST /api/requests/{rid}/findings/{fid}/appeal` · 로그인한 누구나 — appeal
-  - 본문: text: str
-- `POST /api/requests/{rid}/findings/{fid}/appeal/decision` · 관리자 — appeal decision
-  - 본문: accept: bool, note: str = ''
-
-## 메뉴 '다운로드' — 화면 `/download`
-- `GET /api/devkit/identity` · 없음 — devkit identity
-- `GET /api/download` · 로그인한 누구나 — download info
-
-## 메뉴 '레지스트리' — 화면 `/admin/registry`
-- `GET /api/registry` · 관리자 — registry
-- `POST /api/registry/sync` · 관리자 — registry sync
-- `POST /api/registry/{name}/revoke` · 관리자 — revoke
-  - 본문: reason: str
-
-## 메뉴 '자산 현황' — 화면 `/admin/assets`
-- `GET /api/assets` · 관리자 — assets get
-  - 쿼리: login=''
-- `GET /api/dlp` · 관리자 — dlp get
-- `PUT /api/dlp` · 주관리자 — dlp put
-  - 본문: patterns: list[Pattern], expected_version: int
-- `GET /api/watchers` · 관리자 — watchers get
-- `PUT /api/watchers` · 주관리자 — watchers put
-  - 본문: watchers: list[Watcher], expected_version: int
-
-## 메뉴 '에이전트 실행' — 화면 `/admin/agents`
-- `GET /api/agents` · 관리자 — agents list
-- `GET /api/agents/config` · 없음 — agent config
-- `POST /api/agents/policy` · 주관리자 — agents policy
-  - 본문: checkin: str, auth: str
-
-## 메뉴 '감사자' — 화면 `/admin/watchers`
-- (위 메뉴와 같은 파일의 API)
-
-## 메뉴 'LLM 차단 패턴' — 화면 `/admin/dlp`
-- (위 메뉴와 같은 파일의 API)
-
-## 메뉴 '서버 외부 접속' — 화면 `/admin/egress`
-- `GET /api/egress` · 관리자 — egress state
-- `POST /api/egress` · 주관리자 — add rule
-  - 본문: host: str, port: int = 443, reason: str
-- `GET /api/egress/log` · 관리자 — egress log
-  - 쿼리: limit=200
-- `POST /api/egress/selftest` · 관리자 — run selftest
-- `DELETE /api/egress/{host}/{port}` · 주관리자 — remove rule
-
-## 메뉴 '개발자 PC 정책' — 화면 `/admin/devpolicy`
-- `GET /api/devpolicy` · 관리자 — devpolicy get
-- `PUT /api/devpolicy` · 주관리자 — devpolicy put
-  - 본문: secret_sources: list[str] = ['kms', 'keyring', 'env'], weekly_llm_usd: float | None = None, expected_version: int
-
-## 메뉴 '모니터링' — 화면 `/admin/monitor`
-- `GET /api/logs` · 관리자 — logs get
-- `POST /api/logs/clear` · 주관리자 — logs clear
-  - 본문: scope: str
-- `PUT /api/logs/retention` · 주관리자 — logs retention
-  - 본문: days: int, expected_version: int
-- `GET /api/monitor` · 관리자 — monitor get
-  - 쿼리: hours=24
-
-## 메뉴 '백업·복구' — 화면 `/admin/backup`
-- `GET /api/backup` · 관리자 — backup get
-- `POST /api/backup/key-ack` · 주관리자 — backup key ack
-- `POST /api/backup/run` · 주관리자 — backup run
-  - 본문: cmd: str
-- `PUT /api/backup/settings` · 주관리자 — backup settings
-  - 본문: hour: int, keep: int, verify_days: int, rto_minutes: int = 60, expected_version: int
-
-## 메뉴 '회사 환경' — 화면 `/admin/company`
-- `GET /api/company` · 주관리자 — state
-- `POST /api/company/apply` · 주관리자 — apply
-- `GET /api/company/plugin.zip` · 주관리자 — plugin zip
-- `DELETE /api/company/tls` · 주관리자 — reset tls
-
-## 메뉴 '계정·접근' — 화면 `/admin/users`
-- `GET /api/access` · 주관리자 — access get
-- `PUT /api/access` · 주관리자 — access put
-  - 본문: mode: str, entries: list[AccessRule] = [], confirm: bool = False
-- `GET /api/roles` · 주관리자 — roles list
-- `POST /api/roles` · 주관리자 — roles set
-  - 본문: login: str, role: str
-- `POST /api/roles/request` · 로그인한 누구나 — role request
-  - 본문: reason: str
-
-## 메뉴 '버전 관리' — 화면 `/admin/versions`
-- `GET /api/update/status` · 로그인한 누구나 — update status
-- `GET /api/versions` · 주관리자 — versions
-
 ## 메뉴 밖 API (개발 플러그인·CI·내부용 포함)
 ### account/auth.py
 - `GET /api/me` · 로그인한 누구나 — me
@@ -114,6 +13,15 @@
   - 본문: action: str, successor: str = ''
 - `POST /api/users/{login}/offboard` · 주관리자 — offboard api
   - 본문: mode: str, reason: str
+### account/roles.py
+- `GET /api/access` · 주관리자 — access get
+- `PUT /api/access` · 주관리자 — access put
+  - 본문: mode: str, entries: list[AccessRule] = [], confirm: bool = False
+- `GET /api/roles` · 주관리자 — roles list
+- `POST /api/roles` · 주관리자 — roles set
+  - 본문: login: str, role: str
+- `POST /api/roles/request` · 로그인한 누구나 — role request
+  - 본문: reason: str
 ### devkit/ci.py
 - `POST /api/ci/basic` · 로그인한 누구나 — ci basic
   - 본문: repo: str, sha: str
@@ -135,6 +43,17 @@
 - `POST /api/devkit/secrets` · 없음 — devkit secrets
   - 본문: names: list[str], repo: str = ''
 - `GET /api/secrets/names` · 로그인한 누구나 — my secret names
+### devkit/devpolicy.py
+- `GET /api/devpolicy` · 관리자 — devpolicy get
+- `PUT /api/devpolicy` · 주관리자 — devpolicy put
+  - 본문: secret_sources: list[str] = ['kms', 'keyring', 'env'], weekly_llm_usd: float | None = None, expected_version: int
+### devkit/download.py
+- `GET /api/devkit/identity` · 없음 — devkit identity
+- `GET /api/devkit/plugin` · 로그인한 누구나 — 개발 시작 화면 — 개발 플러그인을 사내 마켓플레이스에서 까는 명령에 쓰는 값
+- `GET /api/download` · 로그인한 누구나 — download info
+### devkit/projects.py
+- `POST /api/projects` · 로그인한 누구나 — new project
+  - 본문: name: str, description: str = ''
 ### devkit/tokens.py
 - `GET /api/devkit/budget` · 로그인한 누구나 — my budget
 - `POST /api/devkit/run-token` · 로그인한 누구나 — run token
@@ -142,3 +61,69 @@
 - `GET /api/token` · 로그인한 누구나 — token info
 - `POST /api/tokens/revoke` · 로그인한 누구나 — revoke tokens
   - 본문: login: str = '', reason: str = ''
+### governance/agents.py
+- `GET /api/agents` · 관리자 — agents list
+- `GET /api/agents/config` · 없음 — agent config
+- `POST /api/agents/policy` · 주관리자 — agents policy
+  - 본문: checkin: str, auth: str
+### governance/egress.py
+- `GET /api/egress` · 관리자 — egress state
+- `POST /api/egress` · 주관리자 — add rule
+  - 본문: host: str, port: int = 443, reason: str
+- `GET /api/egress/log` · 관리자 — egress log
+  - 쿼리: limit=200
+- `POST /api/egress/selftest` · 관리자 — run selftest
+- `DELETE /api/egress/{host}/{port}` · 주관리자 — remove rule
+### governance/inspection.py
+- `GET /api/assets` · 관리자 — assets get
+  - 쿼리: login=''
+- `GET /api/dlp` · 관리자 — dlp get
+- `PUT /api/dlp` · 주관리자 — dlp put
+  - 본문: patterns: list[Pattern], expected_version: int
+- `GET /api/watchers` · 관리자 — watchers get
+- `PUT /api/watchers` · 주관리자 — watchers put
+  - 본문: watchers: list[Watcher], expected_version: int
+### mcp/registry.py
+- `GET /api/registry` · 관리자 — registry
+- `POST /api/registry/sync` · 관리자 — registry sync
+- `POST /api/registry/{name}/revoke` · 관리자 — revoke
+  - 본문: reason: str
+### mcp/requests.py
+- `GET /api/approval` · 관리자 — 승인 방식 — 수동 | 자동(CI·배포감사 통과면 바로 승인 → 사내 마켓플레이스). 자동은 관리자 자기 MCP 도 승인되니 주관리자만 바꾼다
+- `PUT /api/approval` · 주관리자 — set approval mode
+  - 본문: mode: str
+- `GET /api/repos` · 로그인한 누구나 — my repos
+- `GET /api/requests` · 로그인한 누구나 — list requests
+  - 쿼리: limit=200, before=''
+- `POST /api/requests` · 로그인한 누구나 — new request
+  - 본문: repo: str, ref: str = 'main'
+- `GET /api/requests/{rid}` · 로그인한 누구나 — get request
+- `POST /api/requests/{rid}/decision` · 관리자 — decide
+  - 본문: action: str, reason: str = ''
+- `POST /api/requests/{rid}/findings/{fid}/appeal` · 로그인한 누구나 — appeal
+  - 본문: text: str
+- `POST /api/requests/{rid}/findings/{fid}/appeal/decision` · 관리자 — appeal decision
+  - 본문: accept: bool, note: str = ''
+### ops/backups.py
+- `GET /api/backup` · 관리자 — backup get
+- `POST /api/backup/key-ack` · 주관리자 — backup key ack
+- `POST /api/backup/run` · 주관리자 — backup run
+  - 본문: cmd: str
+- `PUT /api/backup/settings` · 주관리자 — backup settings
+  - 본문: hour: int, keep: int, verify_days: int, rto_minutes: int = 60, expected_version: int
+### ops/company.py
+- `GET /api/company` · 주관리자 — state
+- `POST /api/company/apply` · 주관리자 — apply
+- `GET /api/company/plugin.zip` · 주관리자 — plugin zip
+- `DELETE /api/company/tls` · 주관리자 — reset tls
+### ops/monitor.py
+- `GET /api/logs` · 관리자 — logs get
+- `POST /api/logs/clear` · 주관리자 — logs clear
+  - 본문: scope: str
+- `PUT /api/logs/retention` · 주관리자 — logs retention
+  - 본문: days: int, expected_version: int
+- `GET /api/monitor` · 관리자 — monitor get
+  - 쿼리: hours=24
+### ops/versions.py
+- `GET /api/update/status` · 로그인한 누구나 — update status
+- `GET /api/versions` · 주관리자 — versions

@@ -8,13 +8,13 @@
     {
       "name": "local-mcp-dev-plugin",
       "source": "./plugins/local-mcp-dev-plugin",
-      "version": "0.9.36",
+      "version": "0.9.37",
       "description": "사내 MCP 개발 키트 — 환경 구성(mcp-setup) · 개발감사(바뀐 파일 검사) 통과 커밋을 mcp-test 로 직접 띄워 툴 호출(mcp-run — 회사 Claude 는 승인된 MCP 만 붙이므로 붙은 것처럼 개발) · 배포 요청(mcp-deploy — 배포감사 + 관리자 승인). 키트 주소 https://localdevmcp.dowmain.org 를 품고 있다."
     },
     {
       "name": "kit-admin-plugin",
       "source": "./plugins/kit-admin-plugin",
-      "version": "0.2.2",
+      "version": "0.2.3",
       "description": "관리자용 — 리눅스 서버의 Claude CLI 에 말로: '환경 빌드해줘'(점검·질문·설치, 쿠버네티스 없으면 묶음의 k3s) · '배포 요청한 거 뭐야 / 다 수락해줘 / 임직원이 쓰게 해줘 / 이 메뉴 뭐야 / 개발자 오류 보여줘'(포털 API 로 읽고 설명하고 확인받아 실행) · '키트 상태 봐줘'."
     }
   ]
