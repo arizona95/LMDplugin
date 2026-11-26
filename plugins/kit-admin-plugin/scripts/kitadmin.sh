@@ -2,7 +2,7 @@
 # 사내 MCP 개발 키트 — 관리자 도우미. 관리자 리눅스 서버에서 Claude CLI 가 부른다(스킬 kit-build · kit-status).
 # 사용: kitadmin.sh check [묶음 폴더] | find | unpack <묶음.tar> [풀 곳] | selfsign <묶음 폴더> <도메인>
 #       certs <묶음 폴더> <파일>... | conf <묶음 폴더> KEY=값... | key <묶음 폴더> [--from <파일>]
-#       setup <묶음 폴더> | install <묶음 폴더> | status
+#       reuse <묶음 폴더> | setup <묶음 폴더> | install <묶음 폴더> | status
 # 줄 머리: [ OK ] 됨 · [주의] 설치는 되지만 볼 것 · [없음] 채워야 함 · [실패] 이대로는 설치 안 됨
 set -u
 LC_ALL=C.UTF-8 2>/dev/null; export LC_ALL
@@ -26,6 +26,8 @@ bundle() {
   [ -f "$d/bootstrap.sh" ] || die "$d 에 bootstrap.sh 가 없습니다 — 묶음을 다시 풀어 주세요"
   printf '%s' "$d"
 }
+# 이 서버에 키트가 이미 설치돼 있나(다시 설치·업그레이드) — k3s 와 키트 데이터 폴더로 본다(root 없이 볼 수 있는 것)
+installed() { [ -f /etc/rancher/k3s/k3s.yaml ] && [ -d /srv/kit ]; }
 conf_get() {
   [ -f "$1/setup/kit.conf" ] || return 0
   sed -n "s/^[[:space:]]*$2=//p" "$1/setup/kit.conf" | tail -n 1 | sed 's/^["'\'']//; s/["'\'']$//'
@@ -162,6 +164,17 @@ key() {
   chmod 600 "$f"; ok "setup/llm.key 넣음(길이 $(tr -d '\n' < "$f" | wc -c)자 · 설치 뒤 키트 키 저장소로 옮기고 이 파일은 지워짐)"
 }
 
+# 7-1) 이미 설치된 키트가 쓰는 인증서를 setup/ 으로 가져오기(다시 설치·업그레이드 — bootstrap 은 setup/ 의 인증서로 설치한다)
+reuse() {
+  d="$(bundle "${1:-}")"; s="$d/setup"; mkdir -p "$s" && chmod 700 "$s"
+  installed || die "이 서버에 설치된 키트가 없습니다 — 인증서는 certs 나 selfsign 으로 넣으세요"
+  can_sudo || { echo "KIT-REUSE-NEEDS-SUDO"; echo "! sudo cp /srv/kit/tls/server.crt /srv/kit/tls/server.key $s/ && sudo sh -c '[ -f /srv/kit/tls/ca.pem ] && cp /srv/kit/tls/ca.pem $s/ || true' && sudo chown $(id -un) $s/*"; exit 0; }
+  for f in server.crt server.key ca.pem; do
+    as_root test -f "/srv/kit/tls/$f" || continue
+    as_root cat "/srv/kit/tls/$f" > "$s/$f" && chmod 600 "$s/$f" && ok "지금 키트의 $f → setup/$f"
+  done
+}
+
 # 8) setup/ 이 설치할 수 있는 상태인가 — bootstrap 의 사전 점검과 같은 것을 미리 본다
 setup() {
   d="$(bundle "${1:-}")"; s="$d/setup"
@@ -176,7 +189,8 @@ setup() {
       if openssl x509 -in "$f" -noout -text 2>/dev/null | grep -q 'CA:TRUE'; then cas="$cas $f"; else leaf="$f"; fi
     fi
   done
-  if [ -z "$leaf" ]; then miss "서버 인증서(server.crt) — 사내 CA 에서 받은 것을 넣거나, 시험이면 selfsign"
+  if [ -z "$leaf" ] && installed; then miss "서버 인증서·개인 키 — 이미 설치된 키트가 쓰는 것을 그대로 쓰려면 reuse, 새 인증서면 certs"
+  elif [ -z "$leaf" ]; then miss "서버 인증서(server.crt) — 사내 CA 에서 받은 것을 넣거나, 시험이면 selfsign"
   else
     sans="$(openssl x509 -in "$leaf" -noout -text | awk '/Subject Alternative Name/ { getline; print }' | tr ',' '\n' | sed -n 's/^[[:space:]]*DNS://p' | tr '\n' ' ')"
     end="$(openssl x509 -in "$leaf" -noout -enddate | cut -d= -f2)"
@@ -203,6 +217,7 @@ setup() {
   case "$m" in ?*/?*) ok "LLM 모델 $m" ;; *) miss "LLM 모델(LLM_MODEL — 예 openai/gpt-4o-mini · anthropic/claude-haiku-4-5)" ;; esac
   case "$b" in http://?*|https://?*) ok "LLM API 주소 $b" ;; *) miss "LLM API 주소(LLM_API_BASE — 사내 반출 승인된 API)" ;; esac
   if [ -s "$s/llm.key" ]; then ok "LLM 키 setup/llm.key(길이 $(tr -d '\n' < "$s/llm.key" | wc -c)자)"
+  elif installed; then ok "LLM 키: 이미 설치된 키트의 키 저장소에 있는 것을 그대로 씀(바꿀 때만 key)"
   else miss "LLM 키(setup/llm.key) — 관리자가 다른 터미널에서 key 명령으로"; fi
   p="$(conf_get "$d" PORTAL_ADMIN_PASSWORD)"
   [ -n "$p" ] && { [ "${#p}" -ge 8 ] && ok "kitadmin 비밀번호 정함(값 숨김)" || bad "kitadmin 비밀번호가 8자보다 짧습니다"; } || ok "kitadmin 비밀번호: 설치가 만들어 끝에 한 번 보여 줌"
@@ -241,7 +256,7 @@ status() {
 cmd="${1:-}"; [ "$#" -gt 0 ] && shift
 case "$cmd" in
   check) check "$@" ;; find) find_bundles ;; unpack) unpack "$@" ;; selfsign) selfsign "$@" ;;
-  certs) certs "$@" ;; conf) conf "$@" ;; key) key "$@" ;; setup) setup "$@" ;;
+  certs) certs "$@" ;; reuse) reuse "$@" ;; conf) conf "$@" ;; key) key "$@" ;; setup) setup "$@" ;;
   install) install "$@" ;; status) status ;;
   *) sed -n '3,6p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
