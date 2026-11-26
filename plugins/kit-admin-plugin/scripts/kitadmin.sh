@@ -187,7 +187,7 @@ reuse() {
 # 8) setup/ 이 설치할 수 있는 상태인가 — bootstrap 의 사전 점검과 같은 것을 미리 본다
 setup() {
   d="$(bundle "${1:-}")"; s="$d/setup"
-  [ -d "$s" ] || { miss "setup/ 폴더"; echo "KIT-SETUP-INCOMPLETE"; exit 1; }
+  [ -d "$s" ] || { miss "setup/ 폴더"; echo "KIT-SETUP-INCOMPLETE"; exit 0; }
   leaf="" keyf="" cas=""
   for f in "$s"/*; do
     [ -f "$f" ] || continue
@@ -241,7 +241,8 @@ setup() {
   pi="$(conf_get "$d" PYPI_INDEX_URL)"; [ -n "$pi" ] && ok "사내 PyPI 미러 $pi" || ok "사내 PyPI 미러: 없음 → pypi.org 를 열어 씀"
   up="$(conf_get "$d" KIT_UPSTREAM_PROXY)"; [ -n "$up" ] && ok "회사 프록시 $up" || ok "회사 프록시: 없음(서버가 바로 나감)"
   if [ "$FAILS" -gt 0 ]; then echo "KIT-SETUP-FAIL"; exit 1; fi
-  [ "$MISSING" = 0 ] && echo "KIT-SETUP-READY" || { echo "KIT-SETUP-INCOMPLETE"; exit 1; }
+  # 채울 것이 남은 건 오류가 아니다(Claude 화면에 '실패'로 보이지 않게 0 으로 끝냄) — 끝 줄 표식으로 판단한다
+  [ "$MISSING" = 0 ] && echo "KIT-SETUP-READY" || echo "KIT-SETUP-INCOMPLETE"
 }
 
 # 9) 설치 — sudo 가 비밀번호 없이 되면 바로, 아니면 관리자가 칠 명령을 알려 준다
