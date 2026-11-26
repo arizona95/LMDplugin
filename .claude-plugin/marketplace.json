@@ -3,13 +3,19 @@
   "owner": {
     "name": "arizona95"
   },
-  "description": "Local MCP Dev — 사내 MCP 개발 키트(localdevmcp.dowmain.org) 개발자 플러그인",
+  "description": "Local MCP Dev — 사내 MCP 개발 키트 플러그인(관리자용 kit-admin-plugin · 개발 임직원용 local-mcp-dev-plugin)",
   "plugins": [
     {
       "name": "local-mcp-dev-plugin",
       "source": "./plugins/local-mcp-dev-plugin",
       "version": "0.9.32",
       "description": "사내 MCP 개발 키트 — 환경 구성(mcp-setup) · 개발감사(바뀐 파일 검사) 통과 커밋을 mcp-test 로 직접 띄워 툴 호출(mcp-run — 회사 Claude 는 승인된 MCP 만 붙이므로 붙은 것처럼 개발) · 배포 요청(mcp-deploy — 배포감사 + 관리자 승인). 키트 주소 https://localdevmcp.dowmain.org 를 품고 있다."
+    },
+    {
+      "name": "kit-admin-plugin",
+      "source": "./plugins/kit-admin-plugin",
+      "version": "0.1.0",
+      "description": "관리자용 — 리눅스 서버의 Claude CLI 에서 '환경 빌드해줘': 서버 점검(리눅스·사양·쿠버네티스·디스크) → 묶음·도메인·인증서·LLM 질문 → setup/ 채우기 → bootstrap 설치(쿠버네티스 없으면 묶음의 k3s) · 설치 뒤 점검(kit-status)."
     }
   ]
 }
