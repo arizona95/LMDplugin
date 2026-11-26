@@ -16,6 +16,7 @@
 import { spawnSync, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
+import tls from "node:tls";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, rmSync, openSync, closeSync, statSync, readdirSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir, homedir, release, hostname } from "node:os";
@@ -205,7 +206,7 @@ function recordState() {
   return {ws, plugin, state: {
     host: hostname(), cwd: WS, node: process.version, git: (g.stdout || "").trim(),
     proxy: (process.env.HTTPS_PROXY || "").replace(/\/\/[^@/]*@/, "//***@"), workspace: !!ws.public, venv: existsSync(join(WS, ".venv")),
-    last_ci: rj(LAST), plugin_kit: rj(PLUGIN_KIT)?.public || ""}};
+    last_ci: rj(LAST), plugin_kit: rj(PLUGIN_KIT)?.public || "", weak_ca: !!REC.weakCa}};
 }
 const SELF_PATH = fileURLToPath(import.meta.url);
 function saveRecord(code) {
@@ -213,7 +214,10 @@ function saveRecord(code) {
   const dir = existsSync(KIT) ? join(KIT, "log") : join(homedir(), ".mcp-kit", "log");
   mkdirSync(dir, {recursive: true});
   const {ws, plugin, state} = recordState();
-  const fail = (text.match(/^.*(KITDEV-FAIL|KIT-ENV-FAIL|실패 —).*$/m) || [""])[0].trim();
+  let fail = (text.match(/^.*(KITDEV-FAIL|KIT-ENV-FAIL|실패 —).*$/m) || [""])[0].trim();
+  // 호환 모드로 접속한 PC 는 성공했어도 PC 마다 한 번 키트에 알린다 — 관리자가 1024비트 회사 인증서 PC 가 몇 대인지 센다
+  const weakMark = join(homedir(), ".mcp-kit", "weak-ca-reported"), weakNew = REC.weakCa && !existsSync(weakMark);
+  if (weakNew && !fail) fail = "회사 TLS 검사 인증서 키가 2048비트보다 짧음 — 호환 모드(OpenSSL 보안 수준 1)로 접속함";
   const rec = {cmd: REC.argv[0] || "", argv: REC.argv, code, fail, output: text.slice(-60000), os: `${process.platform} ${release()}`,
                plugin, kit: ws.public || (REC.argv.includes("--kit") ? REC.argv[REC.argv.indexOf("--kit") + 1] : "") || state.plugin_kit, repo: ws.repo || "", state,
                seconds: Math.round((Date.now() - REC.at) / 1000), timeline: REC.lines};
@@ -221,11 +225,13 @@ function saveRecord(code) {
   writeFileSync(file, JSON.stringify(rec, null, 1));
   for (const old of readdirSync(dir).sort().slice(0, -30)) { try { rmSync(join(dir, old)); } catch {} }
   // 툴이 오류를 돌려준 것(isError)만으로 끝난 시험은 개발 중 정상 — 보내지 않는다
-  if (code === 0 || (!fail && /isError/.test(text))) return;
+  if ((code === 0 && !weakNew) || (!fail && /isError/.test(text))) return;
   if (!rec.kit) { process.stdout.write(`(이 실패 기록은 ${file} 에 남겼습니다 — 키트 주소를 아직 몰라 보내지 않았습니다)\n`); return; }
   const r = spawnSync(process.execPath, [SELF_PATH, "_report", file], {encoding: "utf8", timeout: 30000,
     env: {...process.env, KITDEV_NO_RECORD: "1", GCM_INTERACTIVE: "never", GIT_TERMINAL_PROMPT: "0"}});
   const id = /KITDEV-REPORT: (\S+)/.exec(r.stdout || "")?.[1];
+  if (id && weakNew) try { mkdirSync(dirname(weakMark), {recursive: true}); writeFileSync(weakMark, id); } catch {}
+  if (code === 0) { if (id) process.stdout.write(`(호환 모드로 접속한 것을 사내 키트에 한 번 알렸습니다 — 기록 ${id})\n`); return; }
   process.stdout.write(id ? `(이 실패의 명령·출력·PC 상태를 사내 키트에 보냈습니다 — 기록 ${id} · 관리자가 원인을 찾는 데 씁니다)\n`
                           : `(이 실패 기록은 ${file} 에 남겼습니다 — 사내 키트로는 보내지 못했습니다)\n`);
 }
@@ -266,6 +272,20 @@ function die(msg, code = 1) { console.log(`KITDEV-FAIL: ${msg}`); process.exit(c
 // (2026-11-19 사내 윈도우 PC 실측: 같은 명령을 다시 치면 통과). 서버에 닿기 전에 끊긴 것이니 새 연결로 두 번까지 다시 보낸다.
 // 몸통이 있는 요청(POST)은 요청을 다 쓰기 전에 끊긴 경우(write 오류)만 — 서버가 받았을 수도 있는 요청을 두 번 내지 않게
 const DROPPED = /^(UND_ERR_SOCKET|UND_ERR_CLOSED|ECONNRESET|ECONNABORTED|EPIPE)$/;
+// 회사 TLS 검사 CA 키가 1024비트인 PC 가 있다 — Node 24(OpenSSL 보안 수준 2)는 'CA certificate key too weak' 로 거부하고 Node 22 는 받는다
+// (2026-11-17 사내 윈도우 PC · 같은 회사 다른 PC 는 2048비트라 됨 · 2026-11-26 이 리눅스 PC 에서 Node 24.12 + 1024비트 CA 로 재현).
+// 그 오류가 난 PC 에서만 보안 수준을 Node 22 와 같은 1 로 낮춰 다시 보낸다 — 인증서 확인은 그대로 하고 받아 주는 최소 키 길이만 달라진다.
+// 이 뒤에 띄우는 node(mcp-test·_bg·기록 보내기)도 같게 NODE_OPTIONS 에 넣는다. 2048비트 PC 는 지금과 같다
+const WEAK_CA = /CA certificate key too weak|ca md too weak|ee key too small/i;
+const weakCa = () => {
+  if (REC.weakCa) return;
+  REC.weakCa = true;
+  const list = `${tls.DEFAULT_CIPHERS.replace(/:?@SECLEVEL=\d/g, "")}:@SECLEVEL=1`;
+  tls.DEFAULT_CIPHERS = list;
+  process.env.NODE_OPTIONS = [process.env.NODE_OPTIONS, `--tls-cipher-list=${list}`].filter(Boolean).join(" ");
+  say("이 PC 의 회사 TLS 검사 인증서 키가 2048비트보다 짧아 Node 가 거부했습니다 — 이 PC 에서만 호환 모드(OpenSSL 보안 수준 1, 인증서 확인은 그대로)로 다시 접속합니다. "
+    + "회사 IT 에 'TLS 검사(Somansa 등) 루트 인증서를 2048비트 이상으로 바꿔 달라'고 요청하세요 — 확인: cmd 에서 certutil -dump %NODE_EXTRA_CA_CERTS% | findstr 길이");
+};
 {
   const raw = globalThis.fetch;
   globalThis.fetch = async (url, opt = {}) => {
@@ -273,6 +293,8 @@ const DROPPED = /^(UND_ERR_SOCKET|UND_ERR_CLOSED|ECONNRESET|ECONNABORTED|EPIPE)$
       try { return await raw(url, opt); }
       catch (e) {
         const c = e.cause || {}, idem = !opt.method || /^(GET|HEAD)$/i.test(opt.method);
+        // TLS 손잡기에서 끊긴 것이라 서버는 요청을 받지 않았다 — 몸통 있는 요청도 다시 보내도 된다
+        if (!REC.weakCa && WEAK_CA.test(c.message || "")) { weakCa(); i--; continue; }
         if (i >= 2 || !DROPPED.test(c.code || "") || !(idem || c.syscall === "write")) throw e;
         await new Promise(r => setTimeout(r, 500 * (i + 1)));
       }
