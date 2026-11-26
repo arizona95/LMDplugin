@@ -31,6 +31,9 @@ const LAST = join(KIT, "last-ci.json");
 // 사내 마켓플레이스에서 받은 플러그인에는 그 회사 키트 주소가 들어 있다(kit.json)
 const PLUGIN_KIT = join(dirname(fileURLToPath(import.meta.url)), "..", "kit.json");
 
+// 맨 앞(다시 띄우기 전) 단계가 3초를 넘으면 시간을 찍는다 — 사내 PC 에서 명령마다 드는 고정 시간을 가르게
+function early(t0, what) { const s = (Date.now() - t0) / 1000; if (s >= 3) console.log(`  (걸린 시간 ${s.toFixed(1)}초 — ${what})`); }
+
 // 프록시 찾기 — 환경 변수 → git http.proxy → OS 설정(윈도우: 인터넷 설정·PAC 를 키트 주소로 물어봄 · 리눅스: GNOME 수동 설정)
 function findProxy() {
   const e = process.env;
@@ -52,7 +55,9 @@ function findProxy() {
     const ps = `$u=[Uri]'${target.replace(/'/g, "")}'; $p=[System.Net.WebRequest]::GetSystemWebProxy().GetProxy($u); ` +
       "if($p -and $p.Authority -ne $u.Authority){ $p.AbsoluteUri; " +
       "(Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings' -ErrorAction SilentlyContinue).ProxyOverride }";
+    const t0 = Date.now();
     const r = spawnSync("powershell", ["-NoProfile", "-Command", ps], {encoding: "utf8", timeout: SLOW_MS});
+    early(t0, "프록시 찾기(윈도우 인터넷 설정 · PowerShell)");
     const [url, over = ""] = (r.stdout || "").split(/\r?\n/).map(x => x.trim());
     if (url) return mk(url.replace(/\/$/, ""), "윈도우 인터넷 설정", over.split(";").map(x => x.trim().replace(/^\*\./, ".")).filter(x => x && x !== "<local>"));
     return null;
@@ -74,7 +79,9 @@ if (!process.env.KITDEV_REEXEC) {
     const e = process.env, pk = Object.keys(e).find(k => k.toUpperCase() === "PATH") || "PATH";
     const codex = Object.keys(e).some(k => k.startsWith("CODEX_SANDBOX")) || /[\\/]\.sbx-denybin([;:]|$)/i.test(e[pk] || "") || /\/\/127\.0\.0\.1:9\/?$/.test(e.GIT_HTTP_PROXY || "");
     // 막힘은 EPERM·EACCES 로만 본다 — 프로세스 하나 뜨는 데 몇 초씩 걸리는 PC 가 있다(2026-11-23 사내 PC: node -v 3.8초 · git credential-manager 13.7초), 시간 초과는 샌드박스가 아니다
+    const t0 = Date.now();
     const p = spawnSync(process.execPath, ["-e", ""], {stdio: "pipe", timeout: SLOW_MS});
+    early(t0, "샌드박스 확인(Node 자식 프로세스 띄우기)");
     if (p.error?.code === "ETIMEDOUT") die(`Node 자식 프로세스가 ${SLOW_MS / 60000}분 안에 끝나지 않았습니다 — 이 PC 에서 프로그램이 뜨지 않습니다`);
     if (p.error && !["EPERM", "EACCES"].includes(p.error.code)) p.error = null;
     if (codex || p.error) {
@@ -397,7 +404,19 @@ function gitToken(pub) {
   if (r.status !== 0 || !pw) die(`사내 Git(${u.host}) 로그인 정보를 얻지 못했습니다 — ${WIN ? "Git for Windows(Git Credential Manager)가 설치돼 있는지 확인하고, " : "이 PC 데스크톱 화면에서 실행 중인지 확인하고(로그인 창), "}로그인 창이 뜨면 로그인하세요. (${(r.stderr || "").trim().slice(0, 200)})`);
   const user = /^username=(.*)$/m.exec(r.stdout)?.[1] || "";
   const back = verb => () => run("git", ["credential", verb], {input: r.stdout});
-  return {user, token: pw[1], approve: back("approve"), reject: back("reject")};
+  // 저장(approve)은 같은 자격 증명이면 한 번만 — 사내 PC 는 Git Credential Manager 한 번이 십수 초라(2026-11-23 사내 PC 실측 13.7초)
+  // 명령마다 approve 두 번이 그대로 기다림이 됐다(2026-11-26 이 PC 에서 ci 한 번에 도우미 5번 — fill · push 의 get·store · approve 두 번)
+  const mark = join(homedir(), ".mcp-kit", "cred-approved"), sig = createHash("sha256").update(`${u.host}\n${user}\n${pw[1]}`).digest("hex");
+  const approve = () => {
+    if (readJson(mark)?.[u.host] === sig) return;
+    back("approve")();
+    try { mkdirSync(dirname(mark), {recursive: true}); writeFileSync(mark, JSON.stringify({...readJson(mark, {}), [u.host]: sig}), {mode: 0o600}); } catch {}
+  };
+  const reject = () => {
+    back("reject")();
+    try { const m = readJson(mark, {}); delete m[u.host]; writeFileSync(mark, JSON.stringify(m)); } catch {}
+  };
+  return {user, token: pw[1], approve, reject};
 }
 
 class Kit {
@@ -697,9 +716,12 @@ async function ci(a) {
     say(`개발감사 통과(이미 검사한 내용 — ${prev.sha.slice(0, 12)}) · 다시 돌리지 않습니다`);
     return;
   }
-  kit.auth();
-  const push = git("push", "-q", "origin", "HEAD:main");
-  if (!push.ok) die(`push 실패: ${push.err}`);
+  // 방금 받은 자격 증명을 push 에 헤더로 준다 — git 이 도우미(Git Credential Manager)를 다시 부르지 않게(get·store 두 번).
+  // 명령줄이 아니라 환경 변수(GIT_CONFIG_*)로 넘겨 다른 프로세스 목록에 보이지 않는다
+  const hdr = kit.auth(), n = Number(process.env.GIT_CONFIG_COUNT) || 0;
+  const push = run("git", ["push", "-q", "origin", "HEAD:main"], {env: {...process.env, GIT_CONFIG_COUNT: String(n + 1),
+    [`GIT_CONFIG_KEY_${n}`]: `http.${c.public.replace(/\/+$/, "")}/.extraHeader`, [`GIT_CONFIG_VALUE_${n}`]: `Authorization: ${hdr}`}});
+  if (push.status !== 0) die(`push 실패: ${(push.stderr || "").trim()}`);
   kit.cred.approve();
   return devAudit(kit, c, sha, tree);
 }
@@ -778,15 +800,23 @@ async function test(a) {
   const last = readJson(LAST);
   if (!last || last.sha !== sha || !last.ok || last.audit !== "dev") die(`지금 코드(${sha.slice(0, 12)})는 개발감사를 통과하지 않았습니다. 먼저 ci`);
   say(`개발감사를 통과한 커밋(${sha.slice(0, 12)})으로 시험합니다`);
-  await ensureKit(new Kit(c.public));
+  const kit = new Kit(c.public);
+  await ensureKit(kit);
   await ensureVenv(c);
+  // 실행 토큰을 여기서 받아 mcp-test 에 넘긴다 — mcp-test 가 Git 자격 증명을 다시 묻지 않게(사내 PC 는 한 번에 십수 초).
+  // 넘겨받은 토큰을 읽자마자 환경에서 지우는 mcp-test(키트 v1.0.95~)에만 — 옛 mcp-test 는 환경을 그대로 시험하는 MCP 에 물려준다
+  const runEnv = {...process.env, KIT_DIR: KIT};
+  if (/KIT_RUN_TOKEN/.test((() => { try { return readFileSync(join(KIT, "client", "lib", "server.mjs"), "utf8"); } catch { return ""; } })())) {
+    const rt = await kit.call("POST", "/api/devkit/run-token");
+    if (rt.data?.token) runEnv.KIT_RUN_TOKEN = rt.data.token;
+  }
   const entry = a["with-extension"] || readJson(join(WS, "kit-mcp.json"))?.entry || die("kit-mcp.json 에 entry 가 없습니다");
   say(`MCP 를 이 PC 에서 띄워 ${what === "tools" ? "툴 목록을 받습니다" : `툴 ${tool} 을 부릅니다`} — MCP: ${entry}`);
   // mcp-test.cmd 를 shell 로 띄우면 Node 가 인자를 따옴표 없이 이어 붙여 공백 든 인자가 쪼개진다 — node 로 바로
   const argv = [join(KIT, "client", "mcp-test.mjs"), what, ...(tool ? [tool] : []), "--with-extension", entry,
     ...(a.args !== undefined ? ["--args", a.args] : []), ...(a["args-file"] ? ["--args-file", a["args-file"]] : [])];
   if (process.stdin.isTTY) {
-    const child = spawn(process.execPath, argv, {cwd: WS, stdio: "inherit", env: {...process.env, KIT_DIR: KIT}});
+    const child = spawn(process.execPath, argv, {cwd: WS, stdio: "inherit", env: runEnv});
     child.on("exit", code => process.exit(code ?? 1));
     return;
   }
@@ -794,7 +824,7 @@ async function test(a) {
   rmSync(RUN, {recursive: true, force: true});
   mkdirSync(RUN, {recursive: true});
   writeFileSync(join(RUN, "run.json"), JSON.stringify({argv}));
-  const b = spawn(process.execPath, [SELF, "_bg"], {cwd: WS, detached: true, stdio: "ignore", windowsHide: true, env: {...process.env, KIT_DIR: KIT}});
+  const b = spawn(process.execPath, [SELF, "_bg"], {cwd: WS, detached: true, stdio: "ignore", windowsHide: true, env: runEnv});
   b.on("error", e => die(`시험을 뒤에서 띄우지 못했습니다: ${e.message}`));
   if (b.pid) writeFileSync(join(RUN, "bg.pid"), String(b.pid));
   b.unref();
