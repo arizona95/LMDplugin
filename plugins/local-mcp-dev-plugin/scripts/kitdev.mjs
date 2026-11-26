@@ -18,7 +18,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, rmSync, openSync, closeSync, statSync, readdirSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { tmpdir, homedir } from "node:os";
+import { tmpdir, homedir, release, hostname } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const WIN = process.platform === "win32";
@@ -181,6 +181,65 @@ if (!process.env.KITDEV_REEXEC) {
 }
 
 const say = m => console.log(m);
+// 실행 기록(디버깅용) — 명령 · 출력 그대로 · PC 상태를 워크스페이스 .kit/log 에 남기고(최근 30개), 실패하면 사내 키트에 보낸다.
+// 관리자(관리자 플러그인 '개발자 오류 보여줘')와 키트를 고치는 사람이 모인 기록으로 원인을 찾는다. 비밀값처럼 보이는 것은 키트가 받을 때 가린다(services/devkit/pcreports.py)
+const REC = {argv: process.argv.slice(2), at: Date.now(), out: []};
+if (!process.env.KITDEV_NO_RECORD && !["_bg", "_report"].includes(process.argv[2])) {
+  for (const s of [process.stdout, process.stderr]) {
+    const w = s.write.bind(s);
+    s.write = (c, ...r) => { REC.out.push(String(c)); return w(c, ...r); };
+  }
+  process.on("exit", code => { try { saveRecord(code); } catch {} });
+}
+function recordState() {
+  const rj = f => { try { return JSON.parse(readFileSync(f, "utf8").replace(/^\uFEFF/, "")); } catch { return null; } };
+  const ws = rj(CONF) || {};
+  let plugin = "";
+  try { plugin = JSON.parse(readFileSync(join(dirname(SELF_PATH), "..", ".claude-plugin", "plugin.json"), "utf8")).version; } catch {}
+  const g = spawnSync("git", ["--version"], {encoding: "utf8", timeout: 5000});
+  return {ws, plugin, state: {
+    host: hostname(), cwd: WS, node: process.version, git: (g.stdout || "").trim(),
+    proxy: (process.env.HTTPS_PROXY || "").replace(/\/\/[^@/]*@/, "//***@"), workspace: !!ws.public, venv: existsSync(join(WS, ".venv")),
+    last_ci: rj(LAST), plugin_kit: rj(PLUGIN_KIT)?.public || ""}};
+}
+const SELF_PATH = fileURLToPath(import.meta.url);
+function saveRecord(code) {
+  const text = REC.out.join("").replace(/\x1b\[[0-9;]*m/g, "");
+  const dir = existsSync(KIT) ? join(KIT, "log") : join(homedir(), ".mcp-kit", "log");
+  mkdirSync(dir, {recursive: true});
+  const {ws, plugin, state} = recordState();
+  const fail = (text.match(/^.*(KITDEV-FAIL|KIT-ENV-FAIL|실패 —).*$/m) || [""])[0].trim();
+  const rec = {cmd: REC.argv[0] || "", argv: REC.argv, code, fail, output: text.slice(-60000), os: `${process.platform} ${release()}`,
+               plugin, kit: ws.public || (REC.argv.includes("--kit") ? REC.argv[REC.argv.indexOf("--kit") + 1] : "") || state.plugin_kit, repo: ws.repo || "", state,
+               seconds: Math.round((Date.now() - REC.at) / 1000)};
+  const file = join(dir, `${new Date(REC.at).toISOString().replace(/[:.]/g, "-")}-${rec.cmd || "none"}.json`);
+  writeFileSync(file, JSON.stringify(rec, null, 1));
+  for (const old of readdirSync(dir).sort().slice(0, -30)) { try { rmSync(join(dir, old)); } catch {} }
+  // 툴이 오류를 돌려준 것(isError)만으로 끝난 시험은 개발 중 정상 — 보내지 않는다
+  if (code === 0 || (!fail && /isError/.test(text))) return;
+  if (!rec.kit) { process.stdout.write(`(이 실패 기록은 ${file} 에 남겼습니다 — 키트 주소를 아직 몰라 보내지 않았습니다)\n`); return; }
+  const r = spawnSync(process.execPath, [SELF_PATH, "_report", file], {encoding: "utf8", timeout: 30000,
+    env: {...process.env, KITDEV_NO_RECORD: "1", GCM_INTERACTIVE: "never", GIT_TERMINAL_PROMPT: "0"}});
+  const id = /KITDEV-REPORT: (\S+)/.exec(r.stdout || "")?.[1];
+  process.stdout.write(id ? `(이 실패의 명령·출력·PC 상태를 사내 키트에 보냈습니다 — 기록 ${id} · 관리자가 원인을 찾는 데 씁니다)\n`
+                          : `(이 실패 기록은 ${file} 에 남겼습니다 — 사내 키트로는 보내지 못했습니다)\n`);
+}
+// 기록 보내기(자식 프로세스) — 로그인 창은 띄우지 않는다(저장된 사내 Git 로그인이 있으면 붙이고, 없으면 로그인 없이 보낸다)
+async function report(a) {
+  const rec = JSON.parse(readFileSync(a._[1], "utf8"));
+  const pub = (rec.kit || "").replace(/\/+$/, "");
+  if (!/^https:\/\//.test(pub)) return;
+  const headers = {"Content-Type": "application/json"};
+  const u = new URL(pub);
+  const c = spawnSync("git", ["credential", "fill"], {input: `protocol=https\nhost=${u.host}\npath=git\n\n`, encoding: "utf8", timeout: 15000,
+    env: {...process.env, GCM_INTERACTIVE: "never", GIT_TERMINAL_PROMPT: "0"}});
+  const user = /^username=(.*)$/m.exec(c.stdout || "")?.[1], pw = /^password=(.*)$/m.exec(c.stdout || "")?.[1];
+  if (c.status === 0 && user && pw) headers.Authorization = `Basic ${Buffer.from(`${user}:${pw}`).toString("base64")}`;
+  try {
+    const r = await fetch(`${pub}/api/devkit/reports`, {method: "POST", headers, body: JSON.stringify(rec)});
+    if (r.ok) console.log(`KITDEV-REPORT: ${(await r.json()).id}`);
+  } catch {}
+}
 // 진행 단계 — 'KITDEV-STEP n/N (p%) 이름' 줄. mcp-setup 이 이 이름들로 할 일 목록을 만들어 줄이 나올 때마다 하나씩 체크한다(환경 세팅이 오래 걸려도 어디까지 왔는지 보이게)
 const STEPS = {
   setup: ["사내 키트 로그인 확인", "시험 도구(mcp-test) 받기", "사내 Git 저장소 연결", "환경 점검(MCP 띄우기 · 툴 목록 · 툴 호출)"],
@@ -910,5 +969,5 @@ async function check() {
   await envCheck();
 }
 
-const CMDS = {login, secret, setup, check, ci, test, wait: follow, deploy, status, _bg: bg};
+const CMDS = {login, secret, setup, check, ci, test, wait: follow, deploy, status, _bg: bg, _report: report};
 (CMDS[a._[0]] || (() => die(`사용: kitdev ${Object.keys(CMDS).join("|")}`, 2)))(a);

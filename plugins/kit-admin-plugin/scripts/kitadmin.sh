@@ -3,6 +3,7 @@
 # 사용: kitadmin.sh check [묶음 폴더] | find | unpack <묶음.tar> [풀 곳] | selfsign <묶음 폴더> <도메인>
 #       certs <묶음 폴더> <파일>... | conf <묶음 폴더> KEY=값... | key <묶음 폴더> [--from <파일>]
 #       reuse <묶음 폴더> | setup <묶음 폴더> | install <묶음 폴더> | status
+#       login [키트 주소] (관리자가 다른 터미널에서) | whoami | api <GET|POST|PUT|DELETE> <경로> [JSON | @파일] [--yes] | download <경로> <파일> | pull-reports [폴더] [개수]
 # 줄 머리: [ OK ] 됨 · [주의] 설치는 되지만 볼 것 · [없음] 채워야 함 · [실패] 이대로는 설치 안 됨
 set -u
 LC_ALL=C.UTF-8 2>/dev/null; export LC_ALL
@@ -165,7 +166,7 @@ key() {
     [ -f "${3:-}" ] || die "키 파일이 없습니다: ${3:-}"
     tr -d '\r' < "$3" | grep -v '^[[:space:]]*$' | head -n 1 | tr -d '[:space:]' > "$f"
   else
-    [ -t 0 ] || die "이 명령은 관리자가 따로 연 터미널에서 직접 실행합니다(키를 대화에 붙여 넣지 않게): bash $0 key $d"
+    [ -t 0 ] || die "이 명령은 관리자가 따로 연 터미널에서 직접 실행합니다(키를 대화에 붙여 넣지 않게): bash $(readlink -f "$0") key $d"
     printf 'LLM 공급자 키를 붙여 넣고 Enter (화면에 보이지 않음): '; IFS= read -rs k; echo
     [ -n "$k" ] || die "키가 비었습니다"
     printf '%s\n' "$k" > "$f"
@@ -271,10 +272,102 @@ status() {
   $K -n "$NS" exec kit-0 -c kit -- kit verify 2>&1 | tail -n 40
 }
 
+# 11) 포털 API — 관리자 계정의 사내 Git 토큰으로 부른다(포털은 Bearer <사내 Git 토큰> 을 그 계정으로 본다).
+# 토큰은 관리자가 다른 터미널에서 login 으로 한 번 만들어 이 PC 사용자 폴더에만 둔다(600) — Claude 대화에는 나오지 않는다
+CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/mcp-kit-admin"
+kcurl() { curl -sS --max-time 900 ${KCA:+--cacert "$KCA"} "$@"; }
+load_login() {
+  [ -s "$CONF_DIR/token" ] && [ -s "$CONF_DIR/url" ] || { echo "KIT-LOGIN-NEEDED"; echo "관리자가 다른 터미널에서 한 번 로그인해야 합니다(비밀번호는 그 터미널에만): bash $(readlink -f "$0") login"; exit 3; }
+  KURL="$(cat "$CONF_DIR/url")"; KTOK="$(cat "$CONF_DIR/token")"; KCA=""; [ -s "$CONF_DIR/ca.pem" ] && KCA="$CONF_DIR/ca.pem"
+}
+login() {
+  [ -t 0 ] || die "이 명령은 관리자가 따로 연 터미널에서 직접 실행합니다(비밀번호를 대화에 넣지 않게): bash $(readlink -f "$0") login"
+  mkdir -p "$CONF_DIR" && chmod 700 "$CONF_DIR"
+  url="${1:-}"
+  if [ -z "$url" ]; then
+    d="$(cat "$CONF_DIR/url" 2>/dev/null || true)"
+    printf '키트 주소(예: https://mcp.회사.com)%s: ' "${d:+ [$d]}"; read -r url; url="${url:-$d}"
+  fi
+  url="${url%/}"; case "$url" in https://?*) ;; *) die "https:// 로 시작하는 키트 주소를 주세요" ;; esac
+  KCA=""
+  if ! curl -sS -o /dev/null --max-time 20 "$url/api/devkit/identity" 2>/dev/null; then
+    for c in /srv/kit/tls/ca.pem "$HOME"/kit/mcp-dev-server-kit-v*/setup/ca.pem; do
+      [ -r "$c" ] && curl -sS -o /dev/null --max-time 20 --cacert "$c" "$url/api/devkit/identity" 2>/dev/null && { KCA="$c"; break; }
+    done
+    if [ -z "$KCA" ]; then printf '키트 인증서를 믿지 못합니다. 사내 CA 인증서(ca.pem) 경로: '; read -r KCA; fi
+    curl -sS -o /dev/null --max-time 20 --cacert "$KCA" "$url/api/devkit/identity" || die "그 CA 로도 키트에 접속하지 못했습니다"
+    cp "$KCA" "$CONF_DIR/ca.pem"; KCA="$CONF_DIR/ca.pem"
+  fi
+  echo "1) 관리자 계정·비밀번호로 토큰 만들기  2) 사내 Git 에서 만든 토큰 붙여 넣기(회사 SSO 로그인이면 이쪽 — 사내 Git > 설정 > 애플리케이션)"
+  printf '고르기 [1]: '; read -r how
+  if [ "${how:-1}" = 2 ]; then
+    printf '토큰(화면에 안 보임): '; IFS= read -rs tok; echo
+  else
+    printf '관리자 계정: '; read -r who; printf '비밀번호(화면에 안 보임): '; IFS= read -rs pw; echo
+    body="{\"name\": \"kit-admin-plugin-$(hostname)-$(date +%Y%m%d%H%M%S)\", \"scopes\": [\"read:user\"]}"
+    out="$(kcurl -u "$who:$pw" -H 'content-type: application/json' -d "$body" "$url/git/api/v1/users/$who/tokens")" || die "사내 Git 에 닿지 못했습니다"
+    tok="$(printf '%s' "$out" | sed -n 's/.*"sha1": *"\([0-9a-f]*\)".*/\1/p')"
+    unset pw
+    [ -n "$tok" ] || die "토큰을 만들지 못했습니다 — $(printf '%s' "$out" | head -c 200) (회사 SSO 로그인이면 2번으로)"
+  fi
+  me="$(kcurl -H "Authorization: Bearer $tok" "$url/api/me")" || die "포털에 닿지 못했습니다"
+  printf '%s' "$me" | grep -q '"is_admin": *true' || die "이 계정은 관리자가 아닙니다 — $(printf '%s' "$me" | head -c 200)"
+  printf '%s\n' "$url" > "$CONF_DIR/url"; printf '%s\n' "$tok" > "$CONF_DIR/token"; chmod 600 "$CONF_DIR/url" "$CONF_DIR/token"
+  ok "키트 $url 에 $(printf '%s' "$me" | sed -n 's/.*"login": *"\([^"]*\)".*/\1/p') 로 로그인했습니다(토큰은 $CONF_DIR 에만 — Claude 로 돌아가 이어서 말하세요)"
+}
+whoami_() { load_login; echo "키트 $KURL"; kcurl -H "Authorization: Bearer $KTOK" "$KURL/api/me"; echo; }
+api() {
+  load_login
+  m="$(printf '%s' "${1:-}" | tr '[:lower:]' '[:upper:]')"; path="${2:-}"; shift 2 2>/dev/null || true
+  case "$m" in GET|POST|PUT|DELETE|PATCH) ;; *) die "사용: api <GET|POST|PUT|DELETE> <경로> [JSON | @파일] [--yes]" ;; esac
+  case "$path" in /api/*) ;; *) die "경로는 /api/ 로 시작합니다(references/api.md)" ;; esac
+  data="" yes=0
+  for x in "$@"; do case "$x" in --yes) yes=1 ;; *) data="$x" ;; esac; done
+  if [ "$m" != GET ] && [ "$yes" != 1 ]; then
+    echo "KIT-API-CONFIRM: $m $path ${data:+본문 $data} — 키트를 바꾸는 호출입니다. 관리자에게 무엇이 바뀌는지 말하고 '예'를 받은 뒤 --yes 를 붙여 다시 부르세요"; exit 4
+  fi
+  set -- -X "$m" -H "Authorization: Bearer $KTOK" -w '\nHTTP %{http_code}\n'
+  if [ -n "$data" ]; then
+    case "$data" in @*) set -- "$@" -H 'content-type: application/json' --data-binary "$data" ;; *) set -- "$@" -H 'content-type: application/json' --data-binary "$data" ;; esac
+  fi
+  out="$(kcurl "$@" "$KURL$path")"; rc=$?
+  code="$(printf '%s' "$out" | tail -n 1 | sed 's/HTTP //')"
+  printf '%s' "$out" | sed '$d' | python3 -c 'import sys,json
+t=sys.stdin.read()
+try: t=json.dumps(json.loads(t), ensure_ascii=False, indent=1)
+except Exception: pass
+print(t[:60000] + ("\n…(앞 60000자만)" if len(t) > 60000 else ""))' 2>/dev/null || printf '%s' "$out" | sed '$d' | head -c 60000
+  echo "HTTP $code"
+  [ "$rc" = 0 ] && [ "${code:-0}" -lt 400 ] 2>/dev/null
+}
+
+# 포털 파일 받기(레지스트리의 .mcpb · .zip · managed-mcp.json 등) — download </admin/… 경로> <저장할 파일>
+download() {
+  load_login
+  case "${1:-}" in /admin/*|/api/*) ;; *) die "사용: download </admin/registry/…> <저장할 파일>" ;; esac
+  [ -n "${2:-}" ] || die "저장할 파일 이름을 주세요"
+  code="$(kcurl -H "Authorization: Bearer $KTOK" -o "$2" -w '%{http_code}' "$KURL$1")"
+  [ "$code" = 200 ] && ok "$2 ($(du -h "$2" | cut -f1))" || { rm -f "$2"; die "받지 못했습니다(HTTP $code)"; }
+}
+
+# 12) 개발자 PC 실패 기록 내려받기 — 개발 플러그인이 실패할 때 보낸 명령·출력·PC 상태를 폴더에 모은다(키트를 고칠 때 이 폴더로 원인을 찾는다)
+pull_reports() {
+  load_login
+  out="${1:-$HOME/kit-devpc-reports}"; n="${2:-100}"; mkdir -p "$out"
+  kcurl -H "Authorization: Bearer $KTOK" "$KURL/api/devkit/reports?limit=$n" > "$out/index.json" || die "목록을 받지 못했습니다"
+  got=0
+  for id in $(python3 -c 'import json,sys; [print(r["id"]) for r in json.load(open(sys.argv[1]))]' "$out/index.json"); do
+    [ -s "$out/$id.json" ] && continue
+    kcurl -H "Authorization: Bearer $KTOK" "$KURL/api/devkit/reports/$id" > "$out/$id.json" && got=$((got + 1))
+  done
+  ok "$out — 기록 $(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$out/index.json")건(새로 받은 것 $got건) · 목록 index.json"
+}
+
 cmd="${1:-}"; [ "$#" -gt 0 ] && shift
 case "$cmd" in
   check) check "$@" ;; find) find_bundles ;; unpack) unpack "$@" ;; selfsign) selfsign "$@" ;;
   certs) certs "$@" ;; reuse) reuse "$@" ;; conf) conf "$@" ;; key) key "$@" ;; setup) setup "$@" ;;
   install) install "$@" ;; status) status ;;
+  login) login "$@" ;; whoami) whoami_ ;; api) api "$@" ;; download) download "$@" ;; pull-reports) pull_reports "$@" ;;
   *) sed -n '3,6p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

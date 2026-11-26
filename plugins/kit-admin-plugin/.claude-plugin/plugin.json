@@ -1,7 +1,7 @@
 {
   "name": "kit-admin-plugin",
-  "version": "0.1.4",
-  "description": "사내 MCP 개발 키트 관리자 플러그인 — 리눅스 서버에서 Claude CLI 에 '환경 빌드해줘' 하면 사양·쿠버네티스·디스크를 점검하고, 묶음 위치·도메인·인증서·LLM 을 질문으로 받아 setup/ 을 채운 뒤 bootstrap 으로 설치한다(쿠버네티스가 없으면 묶음의 k3s 를 설치). 설치 뒤 점검·문제 해결·업그레이드(kit-status).",
+  "version": "0.2.0",
+  "description": "사내 MCP 개발 키트 관리자 플러그인 — 리눅스 서버의 Claude CLI 에 말로 시킨다. '환경 빌드해줘'(kit-build: 점검·질문·setup·bootstrap, 쿠버네티스 없으면 묶음의 k3s) · '배포 요청한 거 뭐야 / 다 수락해줘 / 임직원이 쓰게 해줘 / 이 메뉴 뭐야'(kit-admin: 포털 API 로 읽고 설명하고 확인받아 실행) · '키트 상태 봐줘'(kit-status).",
   "author": {
     "name": "dowoo"
   }
