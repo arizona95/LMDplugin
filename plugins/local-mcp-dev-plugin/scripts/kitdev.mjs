@@ -183,11 +183,16 @@ if (!process.env.KITDEV_REEXEC) {
 const say = m => console.log(m);
 // 실행 기록(디버깅용) — 명령 · 출력 그대로 · PC 상태를 워크스페이스 .kit/log 에 남기고(최근 30개), 실패하면 사내 키트에 보낸다.
 // 관리자(관리자 플러그인 '개발자 오류 보여줘')와 키트를 고치는 사람이 모인 기록으로 원인을 찾는다. 비밀값처럼 보이는 것은 키트가 받을 때 가린다(services/devkit/pcreports.py)
-const REC = {argv: process.argv.slice(2), at: Date.now(), out: []};
+const REC = {argv: process.argv.slice(2), at: Date.now(), out: [], lines: [], part: ""};
 if (!process.env.KITDEV_NO_RECORD && !["_bg", "_report"].includes(process.argv[2])) {
   for (const s of [process.stdout, process.stderr]) {
     const w = s.write.bind(s);
-    s.write = (c, ...r) => { REC.out.push(String(c)); return w(c, ...r); };
+    s.write = (c, ...r) => {
+      const t = String(c); REC.out.push(t);
+      const parts = (REC.part + t).split("\n"); REC.part = parts.pop();
+      for (const l of parts) if (l.trim() && REC.lines.length < 3000) REC.lines.push([+((Date.now() - REC.at) / 1000).toFixed(1), l.replace(/\x1b\[[0-9;]*m/g, "").slice(0, 300)]);
+      return w(c, ...r);
+    };
   }
   process.on("exit", code => { try { saveRecord(code); } catch {} });
 }
@@ -211,7 +216,7 @@ function saveRecord(code) {
   const fail = (text.match(/^.*(KITDEV-FAIL|KIT-ENV-FAIL|실패 —).*$/m) || [""])[0].trim();
   const rec = {cmd: REC.argv[0] || "", argv: REC.argv, code, fail, output: text.slice(-60000), os: `${process.platform} ${release()}`,
                plugin, kit: ws.public || (REC.argv.includes("--kit") ? REC.argv[REC.argv.indexOf("--kit") + 1] : "") || state.plugin_kit, repo: ws.repo || "", state,
-               seconds: Math.round((Date.now() - REC.at) / 1000)};
+               seconds: Math.round((Date.now() - REC.at) / 1000), timeline: REC.lines};
   const file = join(dir, `${new Date(REC.at).toISOString().replace(/[:.]/g, "-")}-${rec.cmd || "none"}.json`);
   writeFileSync(file, JSON.stringify(rec, null, 1));
   for (const old of readdirSync(dir).sort().slice(0, -30)) { try { rmSync(join(dir, old)); } catch {} }
@@ -286,8 +291,11 @@ function args(argv) {
   return out;
 }
 
+const slow = (what, t0) => { const s = (Date.now() - t0) / 1000; if (s >= 3) say(`  (걸린 시간 ${s.toFixed(1)}초 — ${what})`); };
 function run(cmd, argv, opt = {}) {
+  const t0 = Date.now();
   const r = spawnSync(cmd, argv, {cwd: WS, encoding: "utf8", ...opt});
+  slow(`${cmd.split(/[\\/]/).pop()} ${argv.filter(x => !String(x).startsWith("-")).slice(0, 2).join(" ")}`, t0);
   if (r.error) die(`${cmd} 를 실행하지 못했습니다: ${r.error.message}`);
   return r;
 }
@@ -382,7 +390,8 @@ class Kit {
     let r;
     for (let i = 0; i < 2; i++) {
       const headers = {Authorization: this.auth(), ...(body ? {"Content-Type": "application/json"} : {})};
-      try { r = await fetch(url, {method, headers, body: body ? JSON.stringify(body) : undefined, redirect: "manual"}); }
+      const t0 = Date.now();
+      try { r = await fetch(url, {method, headers, body: body ? JSON.stringify(body) : undefined, redirect: "manual"}); slow(`키트 ${method} ${path}`, t0); }
       catch (e) { die(`${this.pub} 에 닿지 않습니다: ${netErr(e)}${via()}`); }
       if (r.status !== 401) { if (!this.approved) { this.cred.approve(); this.approved = true; } break; }
       // 저장된 자격 증명이 낡았다(비밀번호 바뀜·지워진 토큰) — 지우고 GCM 로그인 창으로 한 번 다시 묻는다

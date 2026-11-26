@@ -1,6 +1,6 @@
 {
   "name": "local-mcp-dev-plugin",
-  "version": "0.9.33",
+  "version": "0.9.34",
   "description": "사내 MCP 개발 키트 — 워크스페이스에 시험 도구(mcp-test)를 받고(mcp-setup), 개발 중인 MCP 를 이 PC 에서 직접 띄워 툴을 불러 보며 개발하고(mcp-run — 회사 Claude 에는 승인된 MCP 만 붙으므로), 사내 Git 에 배포 요청을 낸다(mcp-deploy). 개발감사(바뀐 파일 검사)를 통과한 커밋만 시험하고, 배포감사(CI 통과 + 저장소 전체 감시자 검사) + 관리자 승인 뒤 회사 Claude 에 들어온다.",
   "author": {
     "name": "dowoo"
