@@ -1,6 +1,6 @@
 {
   "name": "kit-admin-plugin",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "사내 MCP 개발 키트 관리자 플러그인 — 리눅스 서버의 Claude CLI 에 말로 시킨다. '환경 빌드해줘'(kit-build: 점검·질문·setup·bootstrap, 쿠버네티스 없으면 묶음의 k3s) · '배포 요청한 거 뭐야 / 다 수락해줘 / 임직원이 쓰게 해줘 / 이 메뉴 뭐야'(kit-admin: 포털 API 로 읽고 설명하고 확인받아 실행) · '키트 상태 봐줘'(kit-status).",
   "author": {
     "name": "dowoo"
