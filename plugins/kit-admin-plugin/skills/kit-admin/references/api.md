@@ -53,7 +53,7 @@
 - `GET /api/download` · 로그인한 누구나 — download info
 ### devkit/projects.py
 - `POST /api/projects` · 로그인한 누구나 — new project
-  - 본문: name: str, description: str = ''
+  - 본문: name: str, description: str = '', kind: str = 'mcp'
 ### devkit/tokens.py
 - `GET /api/devkit/budget` · 로그인한 누구나 — my budget
 - `POST /api/devkit/run-token` · 로그인한 누구나 — run token
