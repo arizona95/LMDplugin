@@ -17,7 +17,7 @@ import { spawnSync, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import tls from "node:tls";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, rmSync, openSync, closeSync, statSync, readdirSync, renameSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, rmSync, openSync, closeSync, statSync, readdirSync, renameSync, cpSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir, homedir, release, hostname } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -586,8 +586,10 @@ async function setup(a) {
   } else if (origin.ok) {
     die(`이 폴더는 이미 다른 저장소(${origin.out})에 연결돼 있습니다 — 빈 폴더나 사내 Git 저장소에서 실행하세요`);
   } else {
-    if (!a.name) die("새 MCP 이름이 필요합니다 — mcp-setup --kit <주소> --name <영문 소문자 이름> [--desc <설명>]");
-    const p = await kit.call("POST", "/api/projects", {name: a.name, description: a.desc || ""});
+    if (!a.name) die("새 이름이 필요합니다 — mcp-setup --kit <주소> --name <영문 소문자 이름> [--kind mcp|skill|plugin] [--desc <설명>]");
+    const kind = a.kind || "mcp";
+    if (!["mcp", "skill", "plugin"].includes(kind)) die("--kind 는 mcp · skill · plugin 중 하나");
+    const p = await kit.call("POST", "/api/projects", {name: a.name, description: a.desc || "", kind});
     if (p.error !== undefined && p.status !== 409 && !/already|exist|이미/i.test(p.error)) die(`저장소를 만들지 못했습니다: ${p.error}`);
     repo = p.data?.repo || `${kit.cred.user}/${a.name}`;
     if (!existsSync(join(WS, ".git"))) mustGit("init", "-q", "-b", "main");
@@ -791,8 +793,52 @@ async function budgetLine(kit) {
   if (b.over) say("  한도를 다 써서 배포 요청이 막힙니다 — 관리자에게 한도를 늘려 달라고 하세요");
 }
 
+// skill · plugin 시험 — 키트가 마켓플레이스에 올릴 모양 그대로 플러그인 폴더를 만들어 Claude Code 로 검사(claude plugin validate)
+const BUNDLE_SKIP = new Set([".git", ".gitea", ".github", ".kit", ".venv", "node_modules", "kit-mcp.json", ".gitignore"]);
+function bundleTest(m) {
+  const out = join(KIT, "plugin", m.name);
+  rmSync(out, {recursive: true, force: true});
+  mkdirSync(join(out, ".claude-plugin"), {recursive: true});
+  const tops = m.kind === "skill" ? new Set(["skills", "commands", "agents"]) : null;
+  for (const e of readdirSync(WS, {withFileTypes: true})) {
+    if (BUNDLE_SKIP.has(e.name) || (tops && !tops.has(e.name))) continue;
+    cpSync(join(WS, e.name), join(out, e.name), {recursive: true});
+  }
+  const pj = join(out, ".claude-plugin", "plugin.json");
+  const base = readJson(pj) || {};
+  writeFileSync(pj, JSON.stringify({...base, name: m.name, version: m.version || base.version || "0.1.0", description: base.description || m.description || m.name}, null, 2));
+  const list = [];
+  for (const d of ["skills", "commands", "agents"]) {
+    if (!existsSync(join(out, d))) continue;
+    for (const e of readdirSync(join(out, d), {withFileTypes: true})) {
+      if (d === "skills" && e.isDirectory() && existsSync(join(out, d, e.name, "SKILL.md"))) list.push(`스킬 ${e.name}`);
+      else if (d !== "skills" && e.name.endsWith(".md")) list.push(`${d === "commands" ? "명령 /" : "에이전트 "}${e.name.slice(0, -3)}`);
+    }
+  }
+  if (existsSync(join(out, "hooks"))) list.push("훅(hooks/) — 배포감사에서 관리자 검토");
+  if (existsSync(join(out, ".mcp.json"))) list.push(".mcp.json — 배포감사에서 막힘(MCP 는 kind mcp 저장소로)");
+  say(`플러그인 폴더 ${out}`);
+  say(`들어 있는 것: ${list.join(" · ") || "없음"}`);
+  // claude 가 없는 PC 도 있다 — 못 띄우면 건너뛴다(run 은 못 띄우면 멈추므로 spawnSync 로) · 윈도우 npm 판은 claude.cmd 라 셸로
+  const v = spawnSync("claude", ["plugin", "validate", `"${out}"`], {cwd: WS, encoding: "utf8", shell: true, windowsHide: true});
+  if (v.error || v.status === null || /not (found|recognized)|찾을 수 없|인식되지/i.test(v.stderr || "")) say("claude 명령을 찾지 못해 형식 검사(claude plugin validate)는 건너뜀");
+  else {
+    say((v.stdout + v.stderr).trim().split(/\r?\n/).slice(-15).join("\n"));
+    if (v.status !== 0) die("claude plugin validate 실패 — 위 내용을 고친 뒤 ci → test");
+  }
+  if (!list.length) die("플러그인에 든 것이 없습니다(skills/ · commands/ · agents/ · hooks/)");
+  say(`KITDEV-TEST-OK: 이 PC 의 Claude Code 에서 써 보려면 새 터미널에서  claude --plugin-dir "${out}"`);
+}
+
 async function test(a) {
   const c = conf();
+  const m = readJson(join(WS, "kit-mcp.json")) || {};
+  if (m.kind === "skill" || m.kind === "plugin") {
+    if (git("status", "--porcelain").out) die("개발감사를 거치지 않은 변경이 있습니다 — 먼저 ci 로 올려 통과시키세요");
+    const sha = mustGit("rev-parse", "HEAD"), last = readJson(LAST);
+    if (!last || last.sha !== sha || !last.ok || last.audit !== "dev") die(`지금 코드(${sha.slice(0, 12)})는 개발감사를 통과하지 않았습니다. 먼저 ci`);
+    return bundleTest(m);
+  }
   const [, what, tool] = a._;
   if (what !== "tools" && !(what === "call" && tool)) die("사용: test tools  |  test call <툴 이름> [--args <JSON> | --args-file <JSON 파일>]");
   if (git("status", "--porcelain").out) die("개발감사를 거치지 않은 변경이 있습니다 — 먼저 ci 로 올려 통과시키세요");
